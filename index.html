@@ -865,7 +865,7 @@ function Pagos({datos,actualizar}){
           registrar();
           const cl=datos.clientes.find(c=>c.id===detalle.p.clienteId);
           if(cl?.correo){
-            emailjs.send("service_jy0zc8s","template_fthz1c1",{
+            emailjs.send("service_0mcoebn","template_fthz1c1",{
               correo_cliente: cl.correo,
               nombre_cliente: cl.nombre,
               monto_pagado: parseFloat(montoPago).toFixed(2),
