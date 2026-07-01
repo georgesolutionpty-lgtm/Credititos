@@ -389,6 +389,10 @@ function Dashboard({datos}){
 function ProveedorCard({p,sp,pct,color,datos}){
   const [expandido,setExpandido]=React.useState(false);
   const prestamosDelProv=datos.prestamos.filter(x=>x.proveedor===p.id&&x.saldo>0);
+  const pagosDelProv=datos.pagos.filter(pg=>{
+    const pr=datos.prestamos.find(x=>x.id===pg.prestamoId);
+    return pr&&pr.proveedor===p.id;
+  });
   return <div style={{background:"#fff",borderRadius:10,padding:14,marginBottom:10,boxShadow:"0 1px 3px rgba(0,0,0,.07)"}}>
     <div style={{display:"flex",justifyContent:"space-between",marginBottom:6,cursor:"pointer"}} onClick={()=>setExpandido(!expandido)}>
       <span style={{fontWeight:600,fontSize:14}}>{p.nombre}</span>
@@ -407,7 +411,7 @@ function ProveedorCard({p,sp,pct,color,datos}){
     </div>
     {expandido && <div style={{marginTop:10}}>
       {prestamosDelProv.length===0?<p style={{color:"#94a3b8",fontSize:13}}>No hay préstamos activos.</p>:
-        <table style={{...{width:"100%",borderCollapse:"collapse",fontSize:12}}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
           <thead><tr>{["Cliente","Saldo","Tasa","Interés quincena","Próx. pago"].map(h=><th key={h} style={{background:"#f1f5f9",padding:"7px 8px",textAlign:"left",fontWeight:600,color:"#475569",fontSize:11}}>{h}</th>)}</tr></thead>
           <tbody>{prestamosDelProv.map(pr=>{
             const cl=datos.clientes.find(c=>c.id===pr.clienteId);
@@ -418,6 +422,23 @@ function ProveedorCard({p,sp,pct,color,datos}){
               <td style={{padding:"7px 8px",borderTop:"1px solid #f1f5f9"}}>{(tc*100).toFixed(1)}%</td>
               <td style={{padding:"7px 8px",borderTop:"1px solid #f1f5f9"}}>{fmt(pr.saldo*tc)}</td>
               <td style={{padding:"7px 8px",borderTop:"1px solid #f1f5f9"}}>{pr.proximoPago}</td>
+            </tr>;
+          })}</tbody>
+        </table>}
+      <h4 style={{fontSize:12,fontWeight:600,color:"#475569",margin:"12px 0 6px"}}>Historial de pagos</h4>
+      {pagosDelProv.length===0?<p style={{color:"#94a3b8",fontSize:12}}>Sin pagos registrados.</p>:
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+          <thead><tr>{["Fecha","Cliente","Pago","Interés","Capital","Tu ganancia"].map(h=><th key={h} style={{background:"#f1f5f9",padding:"6px 8px",textAlign:"left",fontWeight:600,color:"#475569",fontSize:11}}>{h}</th>)}</tr></thead>
+          <tbody>{[...pagosDelProv].sort((a,b)=>new Date(b.fecha)-new Date(a.fecha)).map(pg=>{
+            const pr=datos.prestamos.find(x=>x.id===pg.prestamoId);
+            const cl=datos.clientes.find(c=>c.id===pr?.clienteId);
+            return <tr key={pg.id}>
+              <td style={{padding:"6px 8px",borderTop:"1px solid #f1f5f9"}}>{pg.fecha}</td>
+              <td style={{padding:"6px 8px",borderTop:"1px solid #f1f5f9"}}>{cl?.nombre||"—"}</td>
+              <td style={{padding:"6px 8px",borderTop:"1px solid #f1f5f9"}}>{fmt(pg.monto)}</td>
+              <td style={{padding:"6px 8px",borderTop:"1px solid #f1f5f9"}}>{fmt(pg.interesAplicado)}</td>
+              <td style={{padding:"6px 8px",borderTop:"1px solid #f1f5f9"}}>{fmt(pg.capitalAplicado)}</td>
+              <td style={{padding:"6px 8px",borderTop:"1px solid #f1f5f9",color:"#7c3aed",fontWeight:600}}>{fmt(pg.gananciaJorge)}</td>
             </tr>;
           })}</tbody>
         </table>}
@@ -806,6 +827,8 @@ function Pagos({datos,actualizar}){
   const [detalle,setDetalle]=React.useState(null);
   const provMap=Object.fromEntries(datos.proveedores.map(p=>[p.id,p]));
   const prestamosActivos=datos.prestamos.filter(p=>p.saldo>0).map(p=>({...p,cliente:datos.clientes.find(c=>c.id===p.clienteId)}));
+  const [soloCapital,setSoloCapital]=React.useState(false);
+
   const calcular=()=>{
     const p=datos.prestamos.find(x=>x.id===prestamoId);
     if(!p||!montoPago) return;
@@ -813,10 +836,17 @@ function Pagos({datos,actualizar}){
     const tc=p.tasaCliente||0.15;
     const interes=p.saldo*tc;
     const pago=parseFloat(montoPago);
-    const interesAplicado=Math.min(pago,interes);
-    const capitalAplicado=Math.max(0,pago-interes);
+    let interesAplicado=0;
+    let capitalAplicado=0;
+    if(soloCapital){
+      interesAplicado=0;
+      capitalAplicado=pago;
+    } else {
+      interesAplicado=Math.min(pago,interes);
+      capitalAplicado=Math.max(0,pago-interes);
+    }
     const nuevoSaldo=Math.max(0,p.saldo-capitalAplicado);
-    setDetalle({interes,interesAplicado,capitalAplicado,nuevoSaldo,gananciaJorge:p.saldo*(tc-prov.tasa/100),gananciaProv:p.saldo*(prov.tasa/100),tc,prov,p});
+    setDetalle({interes,interesAplicado,capitalAplicado,nuevoSaldo,gananciaJorge:soloCapital?0:p.saldo*(tc-prov.tasa/100),gananciaProv:soloCapital?0:p.saldo*(prov.tasa/100),tc,prov,p,soloCapital});
   };
   const registrar=()=>{
     if(!detalle) return;
@@ -848,6 +878,10 @@ function Pagos({datos,actualizar}){
       <input style={s.input} type="number" placeholder="Monto recibido ($)" value={montoPago} onChange={e=>{setMontoPago(e.target.value);setDetalle(null);}}/>
       <input style={s.input} type="date" value={fechaPago} onChange={e=>setFechaPago(e.target.value)}/>
       <input style={s.input} placeholder="Nota (opcional)" value={nota} onChange={e=>setNota(e.target.value)}/>
+      <label style={{display:"flex",alignItems:"center",gap:6,fontSize:13,color:"#475569",whiteSpace:"nowrap"}}>
+        <input type="checkbox" checked={soloCapital} onChange={e=>{setSoloCapital(e.target.checked);setDetalle(null);}}/>
+        Solo capital (sin interés)
+      </label>
       <button style={s.btnSec} onClick={calcular}>Calcular</button>
     </div>
     {detalle && <div style={s.detalleBox}>
@@ -892,7 +926,7 @@ function Pagos({datos,actualizar}){
     <h3 style={s.h3}>Historial de pagos</h3>
     {historial.length===0?<p style={s.empty}>No hay pagos registrados.</p>:
       <div style={{overflowX:"auto"}}><table style={s.tabla}>
-        <thead><tr>{["Fecha","Cliente","Proveedor","Pago","Interés","Capital","Nuevo saldo","Tu ganancia"].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
+        <thead><tr>{["Fecha","Cliente","Proveedor","Pago","Interés","Capital","Nuevo saldo","Tu ganancia",""].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
         <tbody>{historial.map(pg=>{
           const pr=datos.prestamos.find(x=>x.id===pg.prestamoId);
           const pv=pr?provMap[pr.proveedor]:null;
@@ -905,6 +939,10 @@ function Pagos({datos,actualizar}){
             <td style={s.td}>{fmt(pg.capitalAplicado)}</td>
             <td style={s.td}>{fmt(pg.nuevoSaldo)}</td>
             <td style={{...s.td,color:"#7c3aed",fontWeight:600}}>{fmt(pg.gananciaJorge)}</td>
+            <td style={s.td}><button style={s.btnDanger} onClick={()=>{
+              if(!confirm("¿Eliminar este pago?")) return;
+              actualizar({...datos,pagos:datos.pagos.filter(x=>x.id!==pg.id)});
+            }}>✕</button></td>
           </tr>;
         })}</tbody>
       </table></div>}
