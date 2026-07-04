@@ -327,24 +327,72 @@ function Dashboard({datos}){
   const porCliente=datos.clientes.map(c=>({nombre:c.nombre,saldo:activos.filter(p=>p.clienteId===c.id).reduce((a,p)=>a+p.saldo,0)}))
     .filter(c=>c.saldo>0).sort((a,b)=>b.saldo-a.saldo);
 
-  // Evolución de cartera por mes — calculada desde préstamos
-  const evolucion=[];
-  const prestamosPorMes={};
-  datos.prestamos.forEach(p=>{
-    const mes=p.fechaInicio?p.fechaInicio.substring(0,7):null;
-    if(!mes) return;
-    if(!prestamosPorMes[mes]) prestamosPorMes[mes]=0;
-    prestamosPorMes[mes]+=p.capitalInicial||0;
-  });
-  const mesesCartera=Object.keys(prestamosPorMes).sort();
-  let acum=0;
-  mesesCartera.forEach(m=>{acum+=prestamosPorMes[m]; evolucion.push({mes:m,cartera:acum});});
-  const maxCartera=Math.max(...evolucion.map(e=>e.cartera),1);
   const nombreMesCorto=(m)=>{
     const [anio,mes]=m.split("-");
     const nombres=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
     return `${nombres[parseInt(mes)-1]} ${anio.slice(2)}`;
   };
+
+  // Mes actual y anterior
+  const mesActual=hoy().substring(0,7);
+  const d=new Date(); d.setMonth(d.getMonth()-1);
+  const mesAnterior=d.toISOString().substring(0,7);
+
+  // Pagos este mes vs mes anterior
+  const pagosEsteMes=datos.pagos.filter(p=>p.fecha&&p.fecha.startsWith(mesActual));
+  const pagosAnterior=datos.pagos.filter(p=>p.fecha&&p.fecha.startsWith(mesAnterior));
+  const cobradoEsteMes=pagosEsteMes.reduce((s,p)=>s+p.monto,0);
+  const cobradoAnterior=pagosAnterior.reduce((s,p)=>s+p.monto,0);
+  const gananciaEsteMes=pagosEsteMes.reduce((s,p)=>s+(p.gananciaJorge||0),0);
+  const interesEsteMes=pagosEsteMes.reduce((s,p)=>s+(p.interesAplicado||0),0);
+  const capitalEsteMes=pagosEsteMes.reduce((s,p)=>s+(p.capitalAplicado||0),0);
+
+  // Clientes en mora (próximo pago vencido más de 3 días)
+  const ahora=new Date();
+  const enMora=activos.map(p=>({...p,cliente:datos.clientes.find(c=>c.id===p.clienteId)}))
+    .filter(p=>{
+      if(!p.proximoPago) return false;
+      const dias=Math.floor((ahora-new Date(p.proximoPago+"T00:00:00"))/(1000*60*60*24));
+      return dias>3;
+    }).sort((a,b)=>new Date(a.proximoPago)-new Date(b.proximoPago));
+
+  // Deuda a proveedores
+  const deudaPorProv=datos.proveedores.map(p=>{
+    const total=activos.filter(x=>x.proveedor===p.id).reduce((s,x)=>s+x.saldo,0);
+    const interes=activos.filter(x=>x.proveedor===p.id).reduce((s,x)=>s+x.saldo*(p.tasa/100),0);
+    return {...p,total,interes};
+  }).filter(p=>p.total>0);
+
+  // Préstamos por mes global y por proveedor
+  const mesesSet=new Set();
+  datos.prestamos.forEach(p=>{if(p.fechaInicio) mesesSet.add(p.fechaInicio.substring(0,7));});
+  datos.pagos.forEach(p=>{if(p.fecha) mesesSet.add(p.fecha.substring(0,7));});
+  const mesesOrdenados=[...mesesSet].sort();
+
+  const prestadoPorMes=mesesOrdenados.map(mes=>{
+    const total=datos.prestamos.filter(p=>p.fechaInicio&&p.fechaInicio.startsWith(mes)).reduce((s,p)=>s+(p.capitalInicial||0),0);
+    const porProv={};
+    datos.proveedores.forEach(pv=>{
+      porProv[pv.nombre.split(" ")[0]]=datos.prestamos.filter(p=>p.fechaInicio&&p.fechaInicio.startsWith(mes)&&p.proveedor===pv.id).reduce((s,p)=>s+(p.capitalInicial||0),0);
+    });
+    const cobrado=datos.pagos.filter(p=>p.fecha&&p.fecha.startsWith(mes)).reduce((s,p)=>s+p.monto,0);
+    const interesCob=datos.pagos.filter(p=>p.fecha&&p.fecha.startsWith(mes)).reduce((s,p)=>s+(p.interesAplicado||0),0);
+    const capitalCob=datos.pagos.filter(p=>p.fecha&&p.fecha.startsWith(mes)).reduce((s,p)=>s+(p.capitalAplicado||0),0);
+    const ganancia=datos.pagos.filter(p=>p.fecha&&p.fecha.startsWith(mes)).reduce((s,p)=>s+(p.gananciaJorge||0),0);
+    return {mes,total,cobrado,interesCob,capitalCob,ganancia,...porProv};
+  }).filter(m=>m.total>0||m.cobrado>0);
+
+  const maxPrestado=Math.max(...prestadoPorMes.map(m=>m.total),1);
+  const maxCobrado=Math.max(...prestadoPorMes.map(m=>m.cobrado),1);
+
+  // Evolución cartera acumulada
+  const evolucion=[];
+  let acum=0;
+  mesesOrdenados.forEach(mes=>{
+    const nuevos=datos.prestamos.filter(p=>p.fechaInicio&&p.fechaInicio.startsWith(mes)).reduce((s,p)=>s+(p.capitalInicial||0),0);
+    if(nuevos>0){acum+=nuevos; evolucion.push({mes,cartera:acum});}
+  });
+  const maxCartera=Math.max(...evolucion.map(e=>e.cartera),1);
 
   return <div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
