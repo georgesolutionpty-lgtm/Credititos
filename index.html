@@ -20,9 +20,10 @@
 <body>
 <div id="root"></div>
 
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-<script>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
   const firebaseConfig = {
     apiKey: "AIzaSyCbGiPR8xfMvyYxceLBKkdBkeh_nAfJAjg",
     authDomain: "prestjrc.firebaseapp.com",
@@ -31,12 +32,14 @@
     messagingSenderId: "214459135401",
     appId: "1:214459135401:web:f2aa551612295f80e9c0b8"
   };
-  firebase.initializeApp(firebaseConfig);
-  const _db = firebase.firestore();
-  window._db = _db;
-  window._fbSetDoc = (ref, data) => ref.set(data);
-  window._fbGetDoc = (ref) => ref.get();
-  window._fbDoc = (db, col, id) => db.collection(col).doc(id);
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+
+  window._db = db;
+  window._fbSetDoc = setDoc;
+  window._fbGetDoc = getDoc;
+  window._fbDoc = doc;
   window._firebaseReady = true;
   window.dispatchEvent(new Event("firebaseReady"));
 </script>
