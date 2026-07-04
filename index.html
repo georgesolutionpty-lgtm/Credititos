@@ -9,6 +9,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>emailjs.init("s41JxR2FXPxBw_G5J");</script>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
@@ -180,6 +181,83 @@ function App(){
     URL.revokeObjectURL(url);
   };
 
+  const exportarExcel=()=>{
+    const provMap=Object.fromEntries(datos.proveedores.map(p=>[p.id,p]));
+    const wb=XLSX.utils.book_new();
+
+    // Hoja Préstamos
+    const prestamosData=datos.prestamos.map(p=>{
+      const cl=datos.clientes.find(c=>c.id===p.clienteId);
+      const pv=provMap[p.proveedor];
+      const tc=p.tasaCliente||0.15;
+      return {
+        Cliente: cl?.nombre||"—",
+        Cedula: cl?.cedula||"—",
+        Telefono: cl?.telefono||"—",
+        Proveedor: pv?.nombre||"—",
+        "Capital inicial": p.capitalInicial||0,
+        "Saldo actual": p.saldo||0,
+        "Tasa (%)": ((tc)*100).toFixed(1),
+        "Interes quincena": (p.saldo*tc).toFixed(2),
+        "Fecha inicio": p.fechaInicio||"",
+        "Proximo pago": p.proximoPago||"",
+        Estado: p.estado||"",
+      };
+    });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(prestamosData), "Prestamos");
+
+    // Hoja Pagos
+    const pagosData=datos.pagos.map(pg=>{
+      const pr=datos.prestamos.find(x=>x.id===pg.prestamoId);
+      const cl=datos.clientes.find(c=>c.id===pr?.clienteId);
+      const pv=provMap[pr?.proveedor];
+      return {
+        Fecha: pg.fecha,
+        Cliente: cl?.nombre||"—",
+        Proveedor: pv?.nombre||"—",
+        "Monto pagado": pg.monto||0,
+        "Interes aplicado": pg.interesAplicado||0,
+        "Capital aplicado": pg.capitalAplicado||0,
+        "Nuevo saldo": pg.nuevoSaldo||0,
+        "Tu ganancia": pg.gananciaJorge||0,
+        Nota: pg.nota||"",
+      };
+    });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(pagosData), "Pagos");
+
+    // Hoja Clientes
+    const clientesData=datos.clientes.map(c=>{
+      const activos=datos.prestamos.filter(p=>p.clienteId===c.id&&p.saldo>0);
+      return {
+        Nombre: c.nombre,
+        Cedula: c.cedula||"",
+        Telefono: c.telefono||"",
+        Correo: c.correo||"",
+        Direccion: c.direccion||"",
+        Trabajo: c.trabajo||"",
+        "Prestamos activos": activos.length,
+        "Saldo total": activos.reduce((a,p)=>a+p.saldo,0).toFixed(2),
+      };
+    });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(clientesData), "Clientes");
+
+    // Hoja Proveedores
+    const provsData=datos.proveedores.map(p=>{
+      const activos=datos.prestamos.filter(x=>x.proveedor===p.id&&x.saldo>0);
+      const totalPrestado=activos.reduce((a,x)=>a+x.saldo,0);
+      return {
+        Nombre: p.nombre,
+        "Tasa (%)": p.tasa,
+        "Fondo mutuo": p.fondo?"Si":"No",
+        "Prestamos activos": activos.length,
+        "Total prestado": totalPrestado.toFixed(2),
+      };
+    });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(provsData), "Proveedores");
+
+    XLSX.writeFile(wb, `CreditOS_${hoy()}.xlsx`);
+  };
+
   const importar=(e)=>{
     const file=e.target.files[0]; if(!file) return;
     const reader=new FileReader();
@@ -212,7 +290,8 @@ function App(){
         <span style={s.subtitle}>Gestión de préstamos</span>
         <div style={s.headerActions}>
           {msg && <span style={s.guardadoMsg}>{msg}</span>}
-          <button style={s.btnHeader} onClick={exportar}>⬇ Exportar</button>
+          <button style={s.btnHeader} onClick={exportar}>⬇ JSON</button>
+          <button style={{...s.btnHeader,background:"#166534"}} onClick={exportarExcel}>📊 Excel</button>
           <label style={{...s.btnHeader,display:"inline-block"}}>⬆ Importar
             <input type="file" accept=".json" style={{display:"none"}} onChange={importar}/>
           </label>
