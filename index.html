@@ -136,15 +136,20 @@ function App(){
 
   React.useEffect(()=>{
     const cargar=async()=>{
+      setMsg("⏳ Conectando...");
       if(!window._firebaseReady){
         await new Promise(r=>window.addEventListener("firebaseReady",r,{once:true}));
       }
+      // Siempre cargar desde Firebase primero
       const d=await cargarDeFirebase();
       if(d){
         if(!d.proveedores) d.proveedores=proveedoresIniciales;
         setDatos(d);
+        // Actualizar localStorage con los datos de Firebase
+        localStorage.setItem("creditosApp_v3",JSON.stringify(d));
         setMsg("☁ Conectado");
       } else {
+        // Solo usar localStorage si Firebase no tiene datos
         try{
           const local=localStorage.getItem("creditosApp_v3");
           if(local){
@@ -152,7 +157,7 @@ function App(){
             if(!parsed.proveedores) parsed.proveedores=proveedoresIniciales;
             setDatos(parsed);
             await guardarEnFirebase(parsed);
-            setMsg("✔ Datos migrados a la nube");
+            setMsg("✔ Sincronizado");
           } else {
             setDatos(datosIniciales());
             setMsg("☁ Listo");
@@ -684,6 +689,48 @@ function Clientes({datos,actualizar}){
           <h2 style={{fontSize:18,fontWeight:700}}>👤 {perfilCliente.nombre}</h2>
           <button style={{...s.btnDanger,padding:"6px 12px"}} onClick={()=>setVerPerfil(null)}>✕ Cerrar</button>
         </div>
+        {/* Resumen financiero del cliente */}
+        {(()=>{
+          const totalPagado=pagosCliente.reduce((s,p)=>s+(p.monto||0),0);
+          const totalInteres=pagosCliente.reduce((s,p)=>s+(p.interesAplicado||0),0);
+          const totalCapital=pagosCliente.reduce((s,p)=>s+(p.capitalAplicado||0),0);
+          const saldoTotal=prestamosCliente.filter(p=>p.saldo>0).reduce((s,p)=>s+p.saldo,0);
+          const ultimoPago=[...pagosCliente].sort((a,b)=>new Date(b.fecha)-new Date(a.fecha))[0];
+          const ahora=new Date();
+          const enMora=prestamosCliente.some(p=>{
+            if(!p.proximoPago||p.saldo===0) return false;
+            return Math.floor((ahora-new Date(p.proximoPago+"T00:00:00"))/(1000*60*60*24))>3;
+          });
+          return <>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+              <div style={{background:"#eff6ff",borderRadius:8,padding:10,borderLeft:"3px solid #2563eb"}}>
+                <div style={{fontSize:11,color:"#64748b"}}>Saldo pendiente</div>
+                <div style={{fontSize:16,fontWeight:700,color:"#2563eb"}}>{fmt(saldoTotal)}</div>
+              </div>
+              <div style={{background:"#f0fdf4",borderRadius:8,padding:10,borderLeft:"3px solid #059669"}}>
+                <div style={{fontSize:11,color:"#64748b"}}>Total pagado</div>
+                <div style={{fontSize:16,fontWeight:700,color:"#059669"}}>{fmt(totalPagado)}</div>
+              </div>
+              <div style={{background:"#faf5ff",borderRadius:8,padding:10,borderLeft:"3px solid #7c3aed"}}>
+                <div style={{fontSize:11,color:"#64748b"}}>Interés pagado</div>
+                <div style={{fontSize:14,fontWeight:700,color:"#7c3aed"}}>{fmt(totalInteres)}</div>
+              </div>
+              <div style={{background:"#fff7ed",borderRadius:8,padding:10,borderLeft:"3px solid #d97706"}}>
+                <div style={{fontSize:11,color:"#64748b"}}>Capital pagado</div>
+                <div style={{fontSize:14,fontWeight:700,color:"#d97706"}}>{fmt(totalCapital)}</div>
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
+              <span style={{padding:"4px 10px",borderRadius:99,fontSize:12,fontWeight:600,background:enMora?"#fee2e2":"#dcfce7",color:enMora?"#dc2626":"#059669"}}>
+                {enMora?"⚠ En mora":"✔ Al día"}
+              </span>
+              {ultimoPago && <span style={{padding:"4px 10px",borderRadius:99,fontSize:12,background:"#f1f5f9",color:"#475569"}}>
+                Último pago: {ultimoPago.fecha} — {fmt(ultimoPago.monto)}
+              </span>}
+            </div>
+          </>;
+        })()}
+
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
           {[["Cédula",perfilCliente.cedula],["Teléfono",perfilCliente.telefono],["Correo",perfilCliente.correo],["Dirección",perfilCliente.direccion],["Trabajo",perfilCliente.trabajo]].map(([k,v])=>
             <div key={k} style={{background:"#f8fafc",borderRadius:8,padding:10}}>
