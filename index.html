@@ -1,0 +1,1338 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>PrestJRC</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script>emailjs.init("s41JxR2FXPxBw_G5J");</script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',system-ui,sans-serif;background:#f8fafc;color:#1e293b}
+  input,select{font-family:inherit} button{font-family:inherit;cursor:pointer}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyCbGiPR8xfMvyYxceLBKkdBkeh_nAfJAjg",
+    authDomain: "prestjrc.firebaseapp.com",
+    projectId: "prestjrc",
+    storageBucket: "prestjrc.firebasestorage.app",
+    messagingSenderId: "214459135401",
+    appId: "1:214459135401:web:f2aa551612295f80e9c0b8"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+
+  window._db = db;
+  window._fbSetDoc = setDoc;
+  window._fbGetDoc = getDoc;
+  window._fbDoc = doc;
+  window._firebaseReady = true;
+  window.dispatchEvent(new Event("firebaseReady"));
+</script>
+
+<script type="text/babel">
+const COLORES = ["#2563eb","#059669","#7c3aed","#d97706","#dc2626","#0891b2"];
+
+const fmt = (n) => new Intl.NumberFormat("es-CR",{style:"currency",currency:"USD"}).format(n||0);
+const hoy = () => new Date().toISOString().split("T")[0];
+
+const proximaQuincena = (fecha) => {
+  const d = new Date(fecha+"T00:00:00");
+  const anio=d.getFullYear(), mes=d.getMonth(), dia=d.getDate();
+  if(dia<15) return `${anio}-${String(mes+1).padStart(2,"0")}-15`;
+  if(dia<30) return `${anio}-${String(mes+1).padStart(2,"0")}-30`;
+  const sig=new Date(anio,mes+1,15);
+  return `${sig.getFullYear()}-${String(sig.getMonth()+1).padStart(2,"0")}-15`;
+};
+
+const proveedoresIniciales = [
+  {id:"milixa",nombre:"Milixa Yariela",tasa:7.5,fondo:true},
+  {id:"diana", nombre:"Diana Corella", tasa:10, fondo:false},
+  {id:"susana",nombre:"Susana Ramírez",tasa:8,  fondo:false},
+];
+
+const datosIniciales = () => ({
+  proveedores:proveedoresIniciales,
+  clientes:[],prestamos:[],pagos:[],
+  fondoMutuo:{saldoMilixa:100,saldoJorge:0,movimientos:[]},
+});
+
+async function guardarEnFirebase(datos){
+  try{
+    await window._fbSetDoc(window._fbDoc(window._db,"creditosApp","datos"),datos);
+  }catch(e){console.error("Error guardando:",e);}
+}
+
+async function cargarDeFirebase(){
+  try{
+    const snap=await window._fbGetDoc(window._fbDoc(window._db,"creditosApp","datos"));
+    return snap.exists()?snap.data():null;
+  }catch(e){console.error("Error cargando:",e); return null;}
+}
+
+async function crearBackupAutomatico(datos){
+  try{
+    const fecha=hoy();
+    const backupId="backup_"+fecha;
+    // Solo crear backup si no existe uno de hoy
+    const snap=await window._fbGetDoc(window._fbDoc(window._db,"backups",backupId));
+    if(!snap.exists()){
+      await window._fbSetDoc(window._fbDoc(window._db,"backups",backupId),{
+        ...datos,
+        fechaBackup: fecha,
+        horaBackup: new Date().toLocaleTimeString("es-PA")
+      });
+      console.log("Backup automático creado:",backupId);
+    }
+  }catch(e){console.error("Error en backup:",e);}
+}
+
+const s={
+  app:{fontFamily:"'Segoe UI',system-ui,sans-serif",minHeight:"100vh",background:"#f8fafc",color:"#1e293b"},
+  header:{background:"#1e293b",padding:"12px 16px"},
+  headerInner:{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"},
+  logo:{color:"#fff",fontWeight:700,fontSize:18},
+  subtitle:{color:"#94a3b8",fontSize:12,flex:1},
+  headerActions:{display:"flex",gap:6,alignItems:"center"},
+  guardadoMsg:{color:"#4ade80",fontSize:12,fontWeight:600},
+  btnHeader:{padding:"5px 10px",background:"#334155",color:"#fff",border:"none",borderRadius:5,fontSize:12,cursor:"pointer"},
+  nav:{display:"flex",gap:4,padding:"10px 12px",background:"#fff",borderBottom:"1px solid #e2e8f0",overflowX:"auto"},
+  tab:{padding:"7px 10px",border:"none",background:"transparent",cursor:"pointer",borderRadius:6,fontSize:12,color:"#64748b",whiteSpace:"nowrap"},
+  tabActive:{background:"#eff6ff",color:"#2563eb",fontWeight:600},
+  main:{padding:"16px 12px",maxWidth:900,margin:"0 auto"},
+  h2:{fontSize:18,fontWeight:700,margin:"0 0 14px"},
+  h3:{fontSize:14,fontWeight:600,margin:"20px 0 10px",color:"#475569"},
+  cards:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10,marginBottom:20},
+  card:{background:"#fff",borderRadius:10,padding:14,boxShadow:"0 1px 3px rgba(0,0,0,.07)"},
+  cardValor:{fontSize:18,fontWeight:700,marginBottom:4},
+  cardTitulo:{fontSize:11,color:"#64748b"},
+  form:{display:"flex",flexWrap:"wrap",gap:8,marginBottom:16,background:"#fff",padding:14,borderRadius:10,boxShadow:"0 1px 3px rgba(0,0,0,.07)"},
+  input:{flex:"1 1 160px",padding:"8px 10px",border:"1px solid #e2e8f0",borderRadius:6,fontSize:14,outline:"none",background:"#fff"},
+  btn:{padding:"8px 14px",background:"#2563eb",color:"#fff",border:"none",borderRadius:6,fontSize:13,cursor:"pointer",fontWeight:600},
+  btnSec:{padding:"8px 14px",background:"#7c3aed",color:"#fff",border:"none",borderRadius:6,fontSize:13,cursor:"pointer",fontWeight:600},
+  btnDanger:{padding:"4px 9px",background:"#fee2e2",color:"#dc2626",border:"none",borderRadius:4,fontSize:12,cursor:"pointer"},
+  tabla:{width:"100%",borderCollapse:"collapse",background:"#fff",borderRadius:10,overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,.07)",fontSize:13},
+  th:{background:"#f1f5f9",padding:"9px 10px",textAlign:"left",fontWeight:600,color:"#475569",fontSize:11},
+  td:{padding:"9px 10px",borderTop:"1px solid #f1f5f9",verticalAlign:"middle"},
+  empty:{color:"#94a3b8",fontSize:14,padding:12},
+  detalleBox:{background:"#fff",border:"2px solid #2563eb",borderRadius:10,padding:16,marginBottom:20},
+  divider:{height:1,background:"#e2e8f0",margin:"10px 0"},
+};
+
+function Tarjeta({titulo,valor,color}){
+  return <div style={{...s.card,borderTop:`4px solid ${color}`}}>
+    <div style={{...s.cardValor,color}}>{valor}</div>
+    <div style={s.cardTitulo}>{titulo}</div>
+  </div>;
+}
+function Fila({label,valor,bold,color}){
+  return <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
+    <span style={{color:"#64748b",fontSize:13}}>{label}</span>
+    <span style={{fontWeight:bold?700:500,color:color||"#1e293b",fontSize:13}}>{valor}</span>
+  </div>;
+}
+
+function App(){
+  const [datos,setDatos]=React.useState(null);
+  const [vista,setVista]=React.useState("dashboard");
+  const [msg,setMsg]=React.useState("⏳ Conectando...");
+
+  React.useEffect(()=>{
+    const cargar=async()=>{
+      setMsg("⏳ Conectando...");
+      if(!window._firebaseReady){
+        await new Promise(r=>window.addEventListener("firebaseReady",r,{once:true}));
+      }
+      // Siempre cargar desde Firebase primero
+      const d=await cargarDeFirebase();
+      if(d){
+        if(!d.proveedores) d.proveedores=proveedoresIniciales;
+        setDatos(d);
+        // Actualizar localStorage con los datos de Firebase
+        localStorage.setItem("creditosApp_v3",JSON.stringify(d));
+        setMsg("☁ Conectado");
+        // Crear backup automático diario
+        crearBackupAutomatico(d);
+      } else {
+        // Solo usar localStorage si Firebase no tiene datos
+        try{
+          const local=localStorage.getItem("creditosApp_v3");
+          if(local){
+            const parsed=JSON.parse(local);
+            if(!parsed.proveedores) parsed.proveedores=proveedoresIniciales;
+            setDatos(parsed);
+            await guardarEnFirebase(parsed);
+            setMsg("✔ Sincronizado");
+          } else {
+            setDatos(datosIniciales());
+            setMsg("☁ Listo");
+          }
+        }catch{
+          setDatos(datosIniciales());
+          setMsg("☁ Listo");
+        }
+      }
+      setTimeout(()=>setMsg(""),3000);
+    };
+    cargar();
+  },[]);
+
+  const actualizar=async(nd)=>{
+    setDatos(nd);
+    localStorage.setItem("creditosApp_v3",JSON.stringify(nd));
+    setMsg("⏳ Guardando...");
+    await guardarEnFirebase(nd);
+    setMsg("✔ Guardado");
+    setTimeout(()=>setMsg(""),2000);
+  };
+
+  const exportar=()=>{
+    const blob=new Blob([JSON.stringify(datos,null,2)],{type:"application/json"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url; a.download=`creditosApp_${hoy()}.json`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportarExcel=()=>{
+    const provMap=Object.fromEntries(datos.proveedores.map(p=>[p.id,p]));
+    const wb=XLSX.utils.book_new();
+
+    // Hoja Préstamos
+    const prestamosData=datos.prestamos.map(p=>{
+      const cl=datos.clientes.find(c=>c.id===p.clienteId);
+      const pv=provMap[p.proveedor];
+      const tc=p.tasaCliente||0.15;
+      return {
+        Cliente: cl?.nombre||"—",
+        Cedula: cl?.cedula||"—",
+        Telefono: cl?.telefono||"—",
+        Proveedor: pv?.nombre||"—",
+        "Capital inicial": p.capitalInicial||0,
+        "Saldo actual": p.saldo||0,
+        "Tasa (%)": ((tc)*100).toFixed(1),
+        "Interes quincena": (p.saldo*tc).toFixed(2),
+        "Fecha inicio": p.fechaInicio||"",
+        "Proximo pago": p.proximoPago||"",
+        Estado: p.estado||"",
+      };
+    });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(prestamosData), "Prestamos");
+
+    // Hoja Pagos
+    const pagosData=datos.pagos.map(pg=>{
+      const pr=datos.prestamos.find(x=>x.id===pg.prestamoId);
+      const cl=datos.clientes.find(c=>c.id===pr?.clienteId);
+      const pv=provMap[pr?.proveedor];
+      return {
+        Fecha: pg.fecha,
+        Cliente: cl?.nombre||"—",
+        Proveedor: pv?.nombre||"—",
+        "Monto pagado": pg.monto||0,
+        "Interes aplicado": pg.interesAplicado||0,
+        "Capital aplicado": pg.capitalAplicado||0,
+        "Nuevo saldo": pg.nuevoSaldo||0,
+        "Tu ganancia": pg.gananciaJorge||0,
+        Nota: pg.nota||"",
+      };
+    });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(pagosData), "Pagos");
+
+    // Hoja Clientes
+    const clientesData=datos.clientes.map(c=>{
+      const activos=datos.prestamos.filter(p=>p.clienteId===c.id&&p.saldo>0);
+      return {
+        Nombre: c.nombre,
+        Cedula: c.cedula||"",
+        Telefono: c.telefono||"",
+        Correo: c.correo||"",
+        Direccion: c.direccion||"",
+        Trabajo: c.trabajo||"",
+        "Prestamos activos": activos.length,
+        "Saldo total": activos.reduce((a,p)=>a+p.saldo,0).toFixed(2),
+      };
+    });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(clientesData), "Clientes");
+
+    // Hoja Proveedores
+    const provsData=datos.proveedores.map(p=>{
+      const activos=datos.prestamos.filter(x=>x.proveedor===p.id&&x.saldo>0);
+      const totalPrestado=activos.reduce((a,x)=>a+x.saldo,0);
+      return {
+        Nombre: p.nombre,
+        "Tasa (%)": p.tasa,
+        "Fondo mutuo": p.fondo?"Si":"No",
+        "Prestamos activos": activos.length,
+        "Total prestado": totalPrestado.toFixed(2),
+      };
+    });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(provsData), "Proveedores");
+
+    XLSX.writeFile(wb, `CreditOS_${hoy()}.xlsx`);
+  };
+
+  const importar=(e)=>{
+    const file=e.target.files[0]; if(!file) return;
+    const reader=new FileReader();
+    reader.onload=(ev)=>{
+      try{ actualizar(JSON.parse(ev.target.result)); alert("✔ Datos importados."); }
+      catch{ alert("Archivo no válido."); }
+    };
+    reader.readAsText(file); e.target.value="";
+  };
+
+  if(!datos) return <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",flexDirection:"column",gap:12}}>
+    <div style={{fontSize:40}}>☁</div>
+    <div style={{color:"#64748b",fontSize:15}}>Conectando con la nube...</div>
+  </div>;
+
+  const tabs=[
+    {id:"dashboard",label:"📊 Resumen"},
+    {id:"proveedores",label:"🏢 Proveedores"},
+    {id:"clientes",label:"👥 Clientes"},
+    {id:"prestamos",label:"💵 Préstamos"},
+    {id:"pagos",label:"💳 Pagos"},
+    {id:"fondo",label:"🏦 Fondo Mutuo"},
+    {id:"reportes",label:"📈 Reportes"},
+  ];
+
+  return <div style={s.app}>
+    <header style={s.header}>
+      <div style={s.headerInner}>
+        <span style={s.logo}>💰 PrestJRC</span>
+        <span style={s.subtitle}>Gestión de préstamos</span>
+        <div style={s.headerActions}>
+          {msg && <span style={s.guardadoMsg}>{msg}</span>}
+          <button style={s.btnHeader} onClick={exportar}>⬇ JSON</button>
+          <button style={{...s.btnHeader,background:"#166534"}} onClick={exportarExcel}>📊 Excel</button>
+          <label style={{...s.btnHeader,display:"inline-block"}}>⬆ Importar
+            <input type="file" accept=".json" style={{display:"none"}} onChange={importar}/>
+          </label>
+        </div>
+      </div>
+    </header>
+    <nav style={s.nav}>
+      {tabs.map(t=><button key={t.id} onClick={()=>setVista(t.id)} style={{...s.tab,...(vista===t.id?s.tabActive:{})}}>{t.label}</button>)}
+    </nav>
+    <main style={s.main}>
+      {vista==="dashboard"   && <Dashboard   datos={datos}/>}
+      {vista==="proveedores" && <Proveedores datos={datos} actualizar={actualizar}/>}
+      {vista==="clientes"    && <Clientes    datos={datos} actualizar={actualizar}/>}
+      {vista==="prestamos"   && <Prestamos   datos={datos} actualizar={actualizar}/>}
+      {vista==="pagos"       && <Pagos       datos={datos} actualizar={actualizar}/>}
+      {vista==="fondo"       && <FondoMutuo  datos={datos} actualizar={actualizar}/>}
+      {vista==="reportes"    && <Reportes    datos={datos}/>}
+    </main>
+  </div>;
+}
+
+function Dashboard({datos}){
+  const provMap=Object.fromEntries(datos.proveedores.map(p=>[p.id,p]));
+  const activos=datos.prestamos.filter(p=>p.saldo>0);
+  const totalCartera=activos.reduce((s,p)=>s+p.saldo,0);
+  const totalIntereses=activos.reduce((s,p)=>s+p.saldo*(p.tasaCliente||0.15),0);
+  const gananciaJorge=activos.reduce((s,p)=>{
+    const pv=provMap[p.proveedor]; const tc=p.tasaCliente||0.15;
+    return s+(pv?p.saldo*(tc-pv.tasa/100):0);
+  },0);
+  const proximos=activos.map(p=>({...p,cliente:datos.clientes.find(c=>c.id===p.clienteId)}))
+    .filter(p=>p.cliente).sort((a,b)=>new Date(a.proximoPago)-new Date(b.proximoPago)).slice(0,8);
+  const porCliente=datos.clientes.map(c=>({nombre:c.nombre,saldo:activos.filter(p=>p.clienteId===c.id).reduce((a,p)=>a+p.saldo,0)}))
+    .filter(c=>c.saldo>0).sort((a,b)=>b.saldo-a.saldo);
+
+  const nombreMesCorto=(m)=>{
+    const [anio,mes]=m.split("-");
+    const nombres=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+    return `${nombres[parseInt(mes)-1]} ${anio.slice(2)}`;
+  };
+
+  // Mes actual y anterior
+  const mesActual=hoy().substring(0,7);
+  const d=new Date(); d.setMonth(d.getMonth()-1);
+  const mesAnterior=d.toISOString().substring(0,7);
+
+  // Pagos este mes vs mes anterior
+  const pagosEsteMes=datos.pagos.filter(p=>p.fecha&&p.fecha.startsWith(mesActual));
+  const pagosAnterior=datos.pagos.filter(p=>p.fecha&&p.fecha.startsWith(mesAnterior));
+  const cobradoEsteMes=pagosEsteMes.reduce((s,p)=>s+p.monto,0);
+  const cobradoAnterior=pagosAnterior.reduce((s,p)=>s+p.monto,0);
+  const gananciaEsteMes=pagosEsteMes.reduce((s,p)=>s+(p.gananciaJorge||0),0);
+  const interesEsteMes=pagosEsteMes.reduce((s,p)=>s+(p.interesAplicado||0),0);
+  const capitalEsteMes=pagosEsteMes.reduce((s,p)=>s+(p.capitalAplicado||0),0);
+
+  // Clientes en mora (próximo pago vencido más de 3 días)
+  const ahora=new Date();
+  const enMora=activos.map(p=>({...p,cliente:datos.clientes.find(c=>c.id===p.clienteId)}))
+    .filter(p=>{
+      if(!p.proximoPago) return false;
+      const dias=Math.floor((ahora-new Date(p.proximoPago+"T00:00:00"))/(1000*60*60*24));
+      return dias>3;
+    }).sort((a,b)=>new Date(a.proximoPago)-new Date(b.proximoPago));
+
+  // Deuda a proveedores
+  const deudaPorProv=datos.proveedores.map(p=>{
+    const total=activos.filter(x=>x.proveedor===p.id).reduce((s,x)=>s+x.saldo,0);
+    const interes=activos.filter(x=>x.proveedor===p.id).reduce((s,x)=>s+x.saldo*(p.tasa/100),0);
+    return {...p,total,interes};
+  }).filter(p=>p.total>0);
+
+  // Préstamos por mes global y por proveedor
+  const mesesSet=new Set();
+  datos.prestamos.forEach(p=>{if(p.fechaInicio) mesesSet.add(p.fechaInicio.substring(0,7));});
+  datos.pagos.forEach(p=>{if(p.fecha) mesesSet.add(p.fecha.substring(0,7));});
+  const mesesOrdenados=[...mesesSet].sort();
+
+  const prestadoPorMes=mesesOrdenados.map(mes=>{
+    const total=datos.prestamos.filter(p=>p.fechaInicio&&p.fechaInicio.startsWith(mes)).reduce((s,p)=>s+(p.capitalInicial||0),0);
+    const porProv={};
+    datos.proveedores.forEach(pv=>{
+      porProv[pv.nombre.split(" ")[0]]=datos.prestamos.filter(p=>p.fechaInicio&&p.fechaInicio.startsWith(mes)&&p.proveedor===pv.id).reduce((s,p)=>s+(p.capitalInicial||0),0);
+    });
+    const cobrado=datos.pagos.filter(p=>p.fecha&&p.fecha.startsWith(mes)).reduce((s,p)=>s+p.monto,0);
+    const interesCob=datos.pagos.filter(p=>p.fecha&&p.fecha.startsWith(mes)).reduce((s,p)=>s+(p.interesAplicado||0),0);
+    const capitalCob=datos.pagos.filter(p=>p.fecha&&p.fecha.startsWith(mes)).reduce((s,p)=>s+(p.capitalAplicado||0),0);
+    const ganancia=datos.pagos.filter(p=>p.fecha&&p.fecha.startsWith(mes)).reduce((s,p)=>s+(p.gananciaJorge||0),0);
+    return {mes,total,cobrado,interesCob,capitalCob,ganancia,...porProv};
+  }).filter(m=>m.total>0||m.cobrado>0);
+
+  const maxPrestado=Math.max(...prestadoPorMes.map(m=>m.total),1);
+  const maxCobrado=Math.max(...prestadoPorMes.map(m=>m.cobrado),1);
+
+  // Evolución cartera acumulada
+  const evolucion=[];
+  let acum=0;
+  mesesOrdenados.forEach(mes=>{
+    const nuevos=datos.prestamos.filter(p=>p.fechaInicio&&p.fechaInicio.startsWith(mes)).reduce((s,p)=>s+(p.capitalInicial||0),0);
+    if(nuevos>0){acum+=nuevos; evolucion.push({mes,cartera:acum});}
+  });
+  const maxCartera=Math.max(...evolucion.map(e=>e.cartera),1);
+
+  return <div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+      <h2 style={{...s.h2,margin:0}}>Resumen general</h2>
+      <button style={{...s.btnSec,fontSize:12}} onClick={()=>{
+        const ventana=window.open("","_blank");
+        const fecha=hoy();
+        const filas=activos.map(p=>{
+          const cl=datos.clientes.find(c=>c.id===p.clienteId);
+          const pv=provMap[p.proveedor];
+          const tc=p.tasaCliente||0.15;
+          const interes=(p.saldo*tc).toFixed(2);
+          return `<tr>
+            <td>${cl?.nombre||"—"}</td>
+            <td>$${p.saldo.toFixed(2)}</td>
+            <td>$${interes}</td>
+            <td></td>
+            <td>${pv?.nombre.split(" ")[0]||"—"}</td>
+            <td></td>
+          </tr>`;
+        }).join("");
+        ventana.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"/>
+        <title>Cobros quincena ${fecha}</title>
+        <style>
+          body{font-family:Arial,sans-serif;padding:20px;font-size:13px;}
+          h2{text-align:center;margin-bottom:4px;font-size:16px;}
+          p{text-align:center;color:#666;margin-bottom:16px;font-size:12px;}
+          table{width:100%;border-collapse:collapse;}
+          th{background:#1e293b;color:#fff;padding:8px 6px;text-align:left;font-size:12px;}
+          td{padding:8px 6px;border-bottom:1px solid #ddd;font-size:12px;}
+          tr:nth-child(even){background:#f8fafc;}
+          .total{font-weight:bold;background:#e2e8f0!important;}
+          @media print{button{display:none}}
+        </style></head><body>
+        <h2>💰 PrestJRC — Cobros de quincena</h2>
+        <p>Fecha: ${fecha} &nbsp;|&nbsp; Total clientes: ${activos.length} &nbsp;|&nbsp; Cartera: $${totalCartera.toFixed(2)}</p>
+        <button onclick="window.print()" style="margin-bottom:12px;padding:8px 16px;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;">🖨 Imprimir</button>
+        <table>
+          <thead><tr>
+            <th>Cliente</th>
+            <th>Deuda</th>
+            <th>Interés</th>
+            <th>Capital abonado</th>
+            <th>Proveedor</th>
+            <th>Saldo nuevo</th>
+          </tr></thead>
+          <tbody>${filas}</tbody>
+          <tfoot><tr class="total">
+            <td><b>TOTAL</b></td>
+            <td><b>$${totalCartera.toFixed(2)}</b></td>
+            <td><b>$${totalIntereses.toFixed(2)}</b></td>
+            <td></td><td></td><td></td>
+          </tr></tfoot>
+        </table>
+        </body></html>`);
+        ventana.document.close();
+      }}>🖨 Imprimir quincena</button>
+    </div>
+    <div style={s.cards}>
+      <Tarjeta titulo="Cartera total"            valor={fmt(totalCartera)}   color="#2563eb"/>
+      <Tarjeta titulo="Intereses próx. quincena" valor={fmt(totalIntereses)} color="#059669"/>
+      <Tarjeta titulo="Tu ganancia estimada"     valor={fmt(gananciaJorge)}  color="#7c3aed"/>
+      <Tarjeta titulo="Préstamos activos"        valor={activos.length}      color="#d97706"/>
+    </div>
+    {evolucion.length>1 && <>
+      <h3 style={s.h3}>Evolución de la cartera</h3>
+      <div style={{background:"#fff",borderRadius:10,padding:16,boxShadow:"0 1px 3px rgba(0,0,0,.07)",marginBottom:20}}>
+        <div style={{display:"flex",alignItems:"flex-end",gap:6,height:140,overflowX:"auto",paddingBottom:8}}>
+          {evolucion.map((e,i)=>{
+            const altura=Math.max((e.cartera/maxCartera)*120,4);
+            return <div key={e.mes} style={{display:"flex",flexDirection:"column",alignItems:"center",minWidth:44}}>
+              <div style={{fontSize:9,color:"#2563eb",fontWeight:600,marginBottom:2}}>${Math.round(e.cartera)}</div>
+              <div style={{width:32,height:altura,background:"#2563eb",borderRadius:"4px 4px 0 0",opacity:0.8}}/>
+              <div style={{fontSize:9,color:"#64748b",marginTop:4,textAlign:"center"}}>{nombreMesCorto(e.mes)}</div>
+            </div>;
+          })}
+        </div>
+      </div>
+    </>}
+
+    {porCliente.length>0 && <>
+      <h3 style={s.h3}>Cartera por cliente</h3>
+      <div style={{background:"#fff",borderRadius:10,padding:14,boxShadow:"0 1px 3px rgba(0,0,0,.07)",marginBottom:20}}>
+        {porCliente.map((c,i)=>{
+          const pct=totalCartera>0?((c.saldo/totalCartera)*100).toFixed(1):0;
+          const color=COLORES[i%COLORES.length];
+          return <div key={c.nombre} style={{marginBottom:10}}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
+              <span style={{fontSize:13,fontWeight:500}}>{c.nombre}</span>
+              <span style={{fontSize:13,fontWeight:700,color}}>{fmt(c.saldo)} <span style={{color:"#94a3b8",fontWeight:400}}>({pct}%)</span></span>
+            </div>
+            <div style={{background:"#f1f5f9",borderRadius:99,height:8,overflow:"hidden"}}>
+              <div style={{width:`${pct}%`,background:color,height:"100%",borderRadius:99}}/>
+            </div>
+          </div>;
+        })}
+      </div>
+    </>}
+    <h3 style={s.h3}>Próximos pagos</h3>
+    {proximos.length===0?<p style={s.empty}>No hay préstamos activos.</p>:
+      <div style={{overflowX:"auto"}}><table style={s.tabla}>
+        <thead><tr>{["Cliente","Proveedor","Saldo","Tasa","Interés","Próx. pago"].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
+        <tbody>{proximos.map(p=>{
+          const tc=p.tasaCliente||0.15;
+          return <tr key={p.id}>
+            <td style={s.td}>{p.cliente.nombre}</td>
+            <td style={s.td}>{provMap[p.proveedor]?.nombre.split(" ")[0]||"—"}</td>
+            <td style={s.td}>{fmt(p.saldo)}</td>
+            <td style={s.td}>{(tc*100).toFixed(1)}%</td>
+            <td style={s.td}>{fmt(p.saldo*tc)}</td>
+            <td style={s.td}>{p.proximoPago}</td>
+          </tr>;
+        })}</tbody>
+      </table></div>}
+  </div>;
+}
+
+function ProveedorCard({p,sp,pct,color,datos}){
+  const [expandido,setExpandido]=React.useState(false);
+  const prestamosDelProv=datos.prestamos.filter(x=>x.proveedor===p.id&&x.saldo>0);
+  const pagosDelProv=datos.pagos.filter(pg=>{
+    const pr=datos.prestamos.find(x=>x.id===pg.prestamoId);
+    return pr&&pr.proveedor===p.id;
+  });
+  return <div style={{background:"#fff",borderRadius:10,padding:14,marginBottom:10,boxShadow:"0 1px 3px rgba(0,0,0,.07)"}}>
+    <div style={{display:"flex",justifyContent:"space-between",marginBottom:6,cursor:"pointer"}} onClick={()=>setExpandido(!expandido)}>
+      <span style={{fontWeight:600,fontSize:14}}>{p.nombre}</span>
+      <div style={{display:"flex",gap:8,alignItems:"center"}}>
+        <span style={{fontWeight:700,color,fontSize:15}}>{pct}%</span>
+        <span style={{fontSize:16}}>{expandido?"▲":"▼"}</span>
+      </div>
+    </div>
+    <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#64748b",marginBottom:8}}>
+      <span>Prestado: <b style={{color:"#1e293b"}}>{fmt(sp)}</b></span>
+      <span>Tasa: <b style={{color:"#1e293b"}}>{p.tasa}%</b></span>
+      <span>Activos: <b style={{color:"#1e293b"}}>{prestamosDelProv.length}</b></span>
+    </div>
+    <div style={{background:"#f1f5f9",borderRadius:99,height:10,overflow:"hidden",marginBottom:expandido?12:0}}>
+      <div style={{width:`${pct}%`,background:color,height:"100%",borderRadius:99}}/>
+    </div>
+    {expandido && <div style={{marginTop:10}}>
+      {prestamosDelProv.length===0?<p style={{color:"#94a3b8",fontSize:13}}>No hay préstamos activos.</p>:
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+          <thead><tr>{["Cliente","Saldo","Tasa","Interés quincena","Próx. pago"].map(h=><th key={h} style={{background:"#f1f5f9",padding:"7px 8px",textAlign:"left",fontWeight:600,color:"#475569",fontSize:11}}>{h}</th>)}</tr></thead>
+          <tbody>{prestamosDelProv.map(pr=>{
+            const cl=datos.clientes.find(c=>c.id===pr.clienteId);
+            const tc=pr.tasaCliente||0.15;
+            return <tr key={pr.id}>
+              <td style={{padding:"7px 8px",borderTop:"1px solid #f1f5f9"}}>{cl?.nombre||"—"}</td>
+              <td style={{padding:"7px 8px",borderTop:"1px solid #f1f5f9"}}>{fmt(pr.saldo)}</td>
+              <td style={{padding:"7px 8px",borderTop:"1px solid #f1f5f9"}}>{(tc*100).toFixed(1)}%</td>
+              <td style={{padding:"7px 8px",borderTop:"1px solid #f1f5f9"}}>{fmt(pr.saldo*tc)}</td>
+              <td style={{padding:"7px 8px",borderTop:"1px solid #f1f5f9"}}>{pr.proximoPago}</td>
+            </tr>;
+          })}</tbody>
+        </table>}
+      <h4 style={{fontSize:12,fontWeight:600,color:"#475569",margin:"12px 0 6px"}}>Historial de pagos</h4>
+      {pagosDelProv.length===0?<p style={{color:"#94a3b8",fontSize:12}}>Sin pagos registrados.</p>:
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+          <thead><tr>{["Fecha","Cliente","Pago","Interés","Capital","Tu ganancia"].map(h=><th key={h} style={{background:"#f1f5f9",padding:"6px 8px",textAlign:"left",fontWeight:600,color:"#475569",fontSize:11}}>{h}</th>)}</tr></thead>
+          <tbody>{[...pagosDelProv].sort((a,b)=>new Date(b.fecha)-new Date(a.fecha)).map(pg=>{
+            const pr=datos.prestamos.find(x=>x.id===pg.prestamoId);
+            const cl=datos.clientes.find(c=>c.id===pr?.clienteId);
+            return <tr key={pg.id}>
+              <td style={{padding:"6px 8px",borderTop:"1px solid #f1f5f9"}}>{pg.fecha}</td>
+              <td style={{padding:"6px 8px",borderTop:"1px solid #f1f5f9"}}>{cl?.nombre||"—"}</td>
+              <td style={{padding:"6px 8px",borderTop:"1px solid #f1f5f9"}}>{fmt(pg.monto)}</td>
+              <td style={{padding:"6px 8px",borderTop:"1px solid #f1f5f9"}}>{fmt(pg.interesAplicado)}</td>
+              <td style={{padding:"6px 8px",borderTop:"1px solid #f1f5f9"}}>{fmt(pg.capitalAplicado)}</td>
+              <td style={{padding:"6px 8px",borderTop:"1px solid #f1f5f9",color:"#7c3aed",fontWeight:600}}>{fmt(pg.gananciaJorge)}</td>
+            </tr>;
+          })}</tbody>
+        </table>}
+      <div style={{marginTop:14,display:"flex",gap:8,flexWrap:"wrap"}}>
+        <button style={{padding:"8px 14px",background:"#059669",color:"#fff",border:"none",borderRadius:6,fontSize:13,cursor:"pointer",fontWeight:600}} onClick={()=>{
+          const {jsPDF}=window.jspdf;
+          const doc=new jsPDF();
+          const pgs=[...pagosDelProv].sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
+          const totInt=pgs.reduce((s,pg)=>s+(pg.gananciaProv||0),0);
+          const totCap=pgs.reduce((s,pg)=>s+(pg.capitalAplicado||0),0);
+          const totACH=totInt+totCap;
+          let y=20;
+          doc.setFontSize(16);doc.setFont("helvetica","bold");
+          doc.text("LIQUIDACION DE PROVEEDOR",105,y,{align:"center"});y+=10;
+          doc.setFontSize(10);doc.setFont("helvetica","normal");
+          doc.text("Proveedor: "+p.nombre,20,y);y+=6;
+          doc.text("Tasa: "+p.tasa+"%  |  Fecha: "+hoy(),20,y);y+=10;
+          doc.setFillColor(30,41,59);doc.rect(20,y,170,8,"F");
+          doc.setTextColor(255,255,255);doc.setFontSize(9);doc.setFont("helvetica","bold");
+          doc.text("Cliente",22,y+5.5);doc.text("Fecha",75,y+5.5);doc.text("Capital",105,y+5.5);doc.text("Interes",135,y+5.5);doc.text("Total",162,y+5.5);
+          y+=8;doc.setTextColor(0,0,0);
+          pgs.forEach((pg,i)=>{
+            const prl=datos.prestamos.find(x=>x.id===pg.prestamoId);
+            const cll=datos.clientes.find(c=>c.id===prl?.clienteId);
+            if(i%2===0){doc.setFillColor(248,250,252);doc.rect(20,y,170,7,"F");}
+            doc.setFontSize(9);doc.setFont("helvetica","normal");
+            doc.text((cll?.nombre||"").substring(0,22),22,y+5);
+            doc.text(pg.fecha||"",75,y+5);
+            doc.text("$"+(pg.capitalAplicado||0).toFixed(2),105,y+5);
+            doc.text("$"+(pg.gananciaProv||0).toFixed(2),135,y+5);
+            doc.text("$"+((pg.capitalAplicado||0)+(pg.gananciaProv||0)).toFixed(2),162,y+5);
+            y+=7;
+          });
+          y+=8;
+          doc.setFillColor(37,99,235);doc.rect(20,y,170,10,"F");
+          doc.setTextColor(255,255,255);doc.setFontSize(10);doc.setFont("helvetica","bold");
+          doc.text("Capital: $"+totCap.toFixed(2),22,y+7);
+          doc.text("Interes: $"+totInt.toFixed(2),105,y+7);
+          y+=14;doc.setFillColor(5,150,105);doc.rect(20,y,170,12,"F");
+          doc.setFontSize(13);
+          doc.text("TOTAL ACH: $"+totACH.toFixed(2),105,y+8.5,{align:"center"});
+          y+=18;doc.setTextColor(100,116,139);doc.setFontSize(9);doc.setFont("helvetica","normal");
+          doc.text("Generado por PrestJRC",20,y);
+          doc.save("Liquidacion_"+p.nombre.replace(/ /g,"_")+"_"+hoy()+".pdf");
+        }}>📄 Liquidación PDF</button>
+        <button style={{padding:"8px 14px",background:"#25D366",color:"#fff",border:"none",borderRadius:6,fontSize:13,cursor:"pointer",fontWeight:600}} onClick={()=>{
+          const pgs=[...pagosDelProv].sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
+          const totInt=pgs.reduce((s,pg)=>s+(pg.gananciaProv||0),0);
+          const totCap=pgs.reduce((s,pg)=>s+(pg.capitalAplicado||0),0);
+          const totACH=totInt+totCap;
+          const det=pgs.map(pg=>{
+            const prl=datos.prestamos.find(x=>x.id===pg.prestamoId);
+            const cll=datos.clientes.find(c=>c.id===prl?.clienteId);
+            return "%E2%80%A2 "+(cll?.nombre||"")+" Cap $"+(pg.capitalAplicado||0).toFixed(2)+" Int $"+(pg.gananciaProv||0).toFixed(2);
+          }).join("%0A");
+          const msg="*Liquidacion "+p.nombre+"*%0AFecha: "+hoy()+"%0A%0A"+det+"%0A%0A*Capital: $"+totCap.toFixed(2)+"*%0A*Interes: $"+totInt.toFixed(2)+"*%0A*TOTAL ACH: $"+totACH.toFixed(2)+"*%0A%0AGenerado por PrestJRC";
+          window.open("https://wa.me/?text="+msg,"_blank");
+        }}>📱 WhatsApp</button>
+      </div>
+    </div>}
+  </div>;
+}
+
+function Proveedores({datos,actualizar}){
+  const [nombre,setNombre]=React.useState("");
+  const [tasa,setTasa]=React.useState("");
+  const [fondo,setFondo]=React.useState(false);
+  const [editId,setEditId]=React.useState(null);
+  const [eN,setEN]=React.useState(""); const [eT,setET]=React.useState("");
+  const agregar=()=>{
+    if(!nombre.trim()||!tasa||isNaN(parseFloat(tasa))) return;
+    actualizar({...datos,proveedores:[...datos.proveedores,{id:Date.now().toString(),nombre:nombre.trim(),tasa:parseFloat(tasa),fondo}]});
+    setNombre("");setTasa("");setFondo(false);
+  };
+  const guardar=()=>{
+    actualizar({...datos,proveedores:datos.proveedores.map(p=>p.id===editId?{...p,nombre:eN.trim(),tasa:parseFloat(eT)}:p)});
+    setEditId(null);
+  };
+  const eliminar=(id)=>{
+    if(datos.prestamos.some(p=>p.proveedor===id&&p.saldo>0)){alert("Tiene préstamos activos.");return;}
+    if(!confirm("¿Eliminar proveedor?")) return;
+    actualizar({...datos,proveedores:datos.proveedores.filter(p=>p.id!==id)});
+  };
+  const totalCartera=datos.proveedores.reduce((s,p)=>s+datos.prestamos.filter(x=>x.proveedor===p.id&&x.saldo>0).reduce((a,x)=>a+x.saldo,0),0);
+  return <div>
+    <h2 style={s.h2}>Proveedores</h2>
+    {totalCartera>0 && <div style={{marginBottom:20}}>
+      <h3 style={s.h3}>Participación en cartera</h3>
+      {datos.proveedores.map((p,i)=>{
+        const sp=datos.prestamos.filter(x=>x.proveedor===p.id&&x.saldo>0).reduce((a,x)=>a+x.saldo,0);
+        if(sp===0) return null;
+        const pct=((sp/totalCartera)*100).toFixed(1);
+        const color=COLORES[i%COLORES.length];
+        return <ProveedorCard key={p.id} p={p} sp={sp} pct={pct} color={color} datos={datos}/>;
+      })}
+    </div>}
+    <p style={{color:"#64748b",fontSize:13,marginBottom:14}}>Podés agregar proveedores y ajustar sus tasas cuando quieras.</p>
+    <div style={s.form}>
+      <input style={s.input} placeholder="Nombre" value={nombre} onChange={e=>setNombre(e.target.value)}/>
+      <input style={{...s.input,flex:"0 1 120px"}} type="number" placeholder="Tasa (%)" value={tasa} onChange={e=>setTasa(e.target.value)}/>
+      <label style={{display:"flex",alignItems:"center",gap:5,fontSize:13,color:"#475569",whiteSpace:"nowrap"}}>
+        <input type="checkbox" checked={fondo} onChange={e=>setFondo(e.target.checked)}/> Fondo mutuo
+      </label>
+      <button style={s.btn} onClick={agregar}>+ Agregar</button>
+    </div>
+    <div style={{overflowX:"auto"}}><table style={s.tabla}>
+      <thead><tr>{["Nombre","Tasa","Fondo mutuo","Activos",""].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
+      <tbody>{datos.proveedores.map(p=>{
+        const activos=datos.prestamos.filter(x=>x.proveedor===p.id&&x.saldo>0).length;
+        return <tr key={p.id}>
+          <td style={s.td}>{editId===p.id?<input style={{...s.input,flex:"none",width:150}} value={eN} onChange={e=>setEN(e.target.value)}/>:p.nombre}</td>
+          <td style={s.td}>{editId===p.id?<input style={{...s.input,flex:"none",width:70}} type="number" value={eT} onChange={e=>setET(e.target.value)}/>:<span style={{fontWeight:600,color:"#2563eb"}}>{p.tasa}%</span>}</td>
+          <td style={s.td}>{p.fondo?"✔ Sí":"—"}</td>
+          <td style={s.td}>{activos}</td>
+          <td style={s.td}>{editId===p.id
+            ?<div style={{display:"flex",gap:5}}><button style={s.btn} onClick={guardar}>Guardar</button><button style={s.btnDanger} onClick={()=>setEditId(null)}>Cancelar</button></div>
+            :<div style={{display:"flex",gap:5}}><button style={s.btnSec} onClick={()=>{setEditId(p.id);setEN(p.nombre);setET(String(p.tasa));}}>Editar</button><button style={s.btnDanger} onClick={()=>eliminar(p.id)}>Eliminar</button></div>
+          }</td>
+        </tr>;
+      })}</tbody>
+    </table></div>
+  </div>;
+}
+
+function Clientes({datos,actualizar}){
+  const [nombre,setNombre]=React.useState("");
+  const [telefono,setTelefono]=React.useState("");
+  const [cedula,setCedula]=React.useState("");
+  const [direccion,setDireccion]=React.useState("");
+  const [trabajo,setTrabajo]=React.useState("");
+  const [correo,setCorreo]=React.useState("");
+  const [verPerfil,setVerPerfil]=React.useState(null);
+  const [editando,setEditando]=React.useState(null);
+  const [eData,setEData]=React.useState({});
+
+  const agregar=()=>{
+    if(!nombre.trim()) return;
+    actualizar({...datos,clientes:[...datos.clientes,{
+      id:Date.now().toString(),nombre:nombre.trim(),telefono:telefono.trim(),
+      cedula:cedula.trim(),direccion:direccion.trim(),trabajo:trabajo.trim(),correo:correo.trim()
+    }]});
+    setNombre("");setTelefono("");setCedula("");setDireccion("");setTrabajo("");setCorreo("");
+  };
+
+  const eliminar=(id)=>{
+    if(datos.prestamos.some(p=>p.clienteId===id&&p.saldo>0)){alert("Tiene préstamos activos. Eliminá los préstamos primero.");return;}
+    if(!confirm("¿Eliminar cliente?")) return;
+    actualizar({...datos,clientes:datos.clientes.filter(c=>c.id!==id),prestamos:datos.prestamos.filter(p=>p.clienteId!==id)});
+  };
+
+  const iniciarEdicion=(c)=>{
+    setEditando(c.id);
+    setEData({nombre:c.nombre,telefono:c.telefono||"",cedula:c.cedula||"",direccion:c.direccion||"",trabajo:c.trabajo||"",correo:c.correo||""});
+  };
+
+  const guardarEdicion=()=>{
+    actualizar({...datos,clientes:datos.clientes.map(c=>c.id===editando?{...c,...eData}:c)});
+    setEditando(null);
+  };
+
+  const perfilCliente=verPerfil?datos.clientes.find(c=>c.id===verPerfil):null;
+  const prestamosCliente=perfilCliente?datos.prestamos.filter(p=>p.clienteId===perfilCliente.id):[];
+  const pagosCliente=perfilCliente?datos.pagos.filter(pg=>prestamosCliente.some(p=>p.id===pg.prestamoId)):[];
+
+  return <div>
+    <h2 style={s.h2}>Clientes</h2>
+
+    {/* Modal perfil */}
+    {perfilCliente && <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,.5)",zIndex:100,overflowY:"auto",padding:16}}>
+      <div style={{background:"#fff",borderRadius:12,padding:20,maxWidth:600,margin:"0 auto"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+          <h2 style={{fontSize:18,fontWeight:700}}>👤 {perfilCliente.nombre}</h2>
+          <button style={{...s.btnDanger,padding:"6px 12px"}} onClick={()=>setVerPerfil(null)}>✕ Cerrar</button>
+        </div>
+        {/* Resumen financiero del cliente */}
+        {(()=>{
+          const totalPagado=pagosCliente.reduce((s,p)=>s+(p.monto||0),0);
+          const totalInteres=pagosCliente.reduce((s,p)=>s+(p.interesAplicado||0),0);
+          const totalCapital=pagosCliente.reduce((s,p)=>s+(p.capitalAplicado||0),0);
+          const saldoTotal=prestamosCliente.filter(p=>p.saldo>0).reduce((s,p)=>s+p.saldo,0);
+          const ultimoPago=[...pagosCliente].sort((a,b)=>new Date(b.fecha)-new Date(a.fecha))[0];
+          const ahora=new Date();
+          const enMora=prestamosCliente.some(p=>{
+            if(!p.proximoPago||p.saldo===0) return false;
+            return Math.floor((ahora-new Date(p.proximoPago+"T00:00:00"))/(1000*60*60*24))>3;
+          });
+          return <>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+              <div style={{background:"#eff6ff",borderRadius:8,padding:10,borderLeft:"3px solid #2563eb"}}>
+                <div style={{fontSize:11,color:"#64748b"}}>Saldo pendiente</div>
+                <div style={{fontSize:16,fontWeight:700,color:"#2563eb"}}>{fmt(saldoTotal)}</div>
+              </div>
+              <div style={{background:"#f0fdf4",borderRadius:8,padding:10,borderLeft:"3px solid #059669"}}>
+                <div style={{fontSize:11,color:"#64748b"}}>Total pagado</div>
+                <div style={{fontSize:16,fontWeight:700,color:"#059669"}}>{fmt(totalPagado)}</div>
+              </div>
+              <div style={{background:"#faf5ff",borderRadius:8,padding:10,borderLeft:"3px solid #7c3aed"}}>
+                <div style={{fontSize:11,color:"#64748b"}}>Interés pagado</div>
+                <div style={{fontSize:14,fontWeight:700,color:"#7c3aed"}}>{fmt(totalInteres)}</div>
+              </div>
+              <div style={{background:"#fff7ed",borderRadius:8,padding:10,borderLeft:"3px solid #d97706"}}>
+                <div style={{fontSize:11,color:"#64748b"}}>Capital pagado</div>
+                <div style={{fontSize:14,fontWeight:700,color:"#d97706"}}>{fmt(totalCapital)}</div>
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
+              <span style={{padding:"4px 10px",borderRadius:99,fontSize:12,fontWeight:600,background:enMora?"#fee2e2":"#dcfce7",color:enMora?"#dc2626":"#059669"}}>
+                {enMora?"⚠ En mora":"✔ Al día"}
+              </span>
+              {ultimoPago && <span style={{padding:"4px 10px",borderRadius:99,fontSize:12,background:"#f1f5f9",color:"#475569"}}>
+                Último pago: {ultimoPago.fecha} — {fmt(ultimoPago.monto)}
+              </span>}
+            </div>
+          </>;
+        })()}
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+          {[["Cédula",perfilCliente.cedula],["Teléfono",perfilCliente.telefono],["Correo",perfilCliente.correo],["Dirección",perfilCliente.direccion],["Trabajo",perfilCliente.trabajo]].map(([k,v])=>
+            <div key={k} style={{background:"#f8fafc",borderRadius:8,padding:10}}>
+              <div style={{fontSize:11,color:"#64748b",marginBottom:2}}>{k}</div>
+              <div style={{fontSize:13,fontWeight:500}}>{v||"—"}</div>
+            </div>
+          )}
+        </div>
+        <h3 style={s.h3}>Préstamos</h3>
+        {prestamosCliente.length===0?<p style={s.empty}>Sin préstamos.</p>:
+          <table style={{...s.tabla,marginBottom:12}}>
+            <thead><tr>{["Capital","Saldo","Tasa","Estado","Próx. pago"].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
+            <tbody>{prestamosCliente.map(p=>{
+              const tc=p.tasaCliente||0.15;
+              return <tr key={p.id}>
+                <td style={s.td}>{fmt(p.capitalInicial)}</td>
+                <td style={s.td}>{fmt(p.saldo)}</td>
+                <td style={s.td}>{(tc*100).toFixed(1)}%</td>
+                <td style={s.td}><span style={{color:p.estado==="activo"?"#059669":"#6b7280"}}>{p.estado==="activo"?"Activo":"Pagado"}</span></td>
+                <td style={s.td}>{p.proximoPago}</td>
+              </tr>;
+            })}</tbody>
+          </table>}
+        <h3 style={s.h3}>Historial de pagos</h3>
+        {pagosCliente.length===0?<p style={s.empty}>Sin pagos registrados.</p>:
+          <table style={s.tabla}>
+            <thead><tr>{["Fecha","Pago","Interés","Capital","Saldo"].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
+            <tbody>{[...pagosCliente].sort((a,b)=>new Date(b.fecha)-new Date(a.fecha)).map(pg=><tr key={pg.id}>
+              <td style={s.td}>{pg.fecha}</td>
+              <td style={s.td}>{fmt(pg.monto)}</td>
+              <td style={s.td}>{fmt(pg.interesAplicado)}</td>
+              <td style={s.td}>{fmt(pg.capitalAplicado)}</td>
+              <td style={s.td}>{fmt(pg.nuevoSaldo)}</td>
+            </tr>)}</tbody>
+          </table>}
+      </div>
+    </div>}
+
+    {/* Formulario agregar */}
+    <div style={s.form}>
+      <input style={s.input} placeholder="Nombre completo *" value={nombre} onChange={e=>setNombre(e.target.value)}/>
+      <input style={s.input} placeholder="Cédula" value={cedula} onChange={e=>setCedula(e.target.value)}/>
+      <input style={s.input} placeholder="Teléfono" value={telefono} onChange={e=>setTelefono(e.target.value)}/>
+      <input style={s.input} placeholder="Correo electrónico" value={correo} onChange={e=>setCorreo(e.target.value)}/>
+      <input style={s.input} placeholder="Dirección de domicilio" value={direccion} onChange={e=>setDireccion(e.target.value)}/>
+      <input style={s.input} placeholder="Lugar de trabajo" value={trabajo} onChange={e=>setTrabajo(e.target.value)}/>
+      <button style={s.btn} onClick={agregar}>+ Agregar cliente</button>
+    </div>
+
+    {datos.clientes.length===0?<p style={s.empty}>No hay clientes todavía.</p>:
+      <div style={{overflowX:"auto"}}><table style={s.tabla}>
+        <thead><tr>{["Nombre","Cédula","Teléfono","Correo","Activos","Saldo total",""].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
+        <tbody>{datos.clientes.map(c=>{
+          const pa=datos.prestamos.filter(p=>p.clienteId===c.id&&p.saldo>0);
+          if(editando===c.id) return <tr key={c.id} style={{background:"#eff6ff"}}>
+            <td style={s.td}><input style={{...s.input,flex:"none",width:130,fontSize:12,padding:"4px 6px"}} value={eData.nombre} onChange={e=>setEData({...eData,nombre:e.target.value})}/></td>
+            <td style={s.td}><input style={{...s.input,flex:"none",width:90,fontSize:12,padding:"4px 6px"}} value={eData.cedula} onChange={e=>setEData({...eData,cedula:e.target.value})}/></td>
+            <td style={s.td}><input style={{...s.input,flex:"none",width:100,fontSize:12,padding:"4px 6px"}} value={eData.telefono} onChange={e=>setEData({...eData,telefono:e.target.value})}/></td>
+            <td style={s.td}><input style={{...s.input,flex:"none",width:140,fontSize:12,padding:"4px 6px"}} value={eData.correo} onChange={e=>setEData({...eData,correo:e.target.value})}/></td>
+            <td style={s.td}>{pa.length}</td>
+            <td style={s.td}>{pa.length>0?fmt(pa.reduce((a,p)=>a+p.saldo,0)):"—"}</td>
+            <td style={s.td}><div style={{display:"flex",gap:4}}>
+              <button style={{...s.btn,padding:"4px 8px",fontSize:11}} onClick={guardarEdicion}>✔</button>
+              <button style={{...s.btnDanger,padding:"4px 8px"}} onClick={()=>setEditando(null)}>✕</button>
+            </div></td>
+          </tr>;
+          return <tr key={c.id}>
+            <td style={{...s.td,cursor:"pointer",color:"#2563eb",fontWeight:500}} onClick={()=>setVerPerfil(c.id)}>{c.nombre}</td>
+            <td style={s.td}>{c.cedula||"—"}</td>
+            <td style={s.td}>{c.telefono||"—"}</td>
+            <td style={s.td}>{c.correo||"—"}</td>
+            <td style={s.td}>{pa.length}</td>
+            <td style={s.td}>{pa.length>0?fmt(pa.reduce((a,p)=>a+p.saldo,0)):"—"}</td>
+            <td style={s.td}><div style={{display:"flex",gap:4}}>
+              <button style={{...s.btnSec,padding:"4px 8px",fontSize:11}} onClick={()=>iniciarEdicion(c)}>✏</button>
+              <button style={s.btnDanger} onClick={()=>eliminar(c.id)}>✕</button>
+            </div></td>
+          </tr>;
+        })}</tbody>
+      </table></div>}
+  </div>;
+}
+
+function Prestamos({datos,actualizar}){
+  const [clienteId,setClienteId]=React.useState("");
+  const [proveedor,setProveedor]=React.useState("");
+  const [monto,setMonto]=React.useState("");
+  const [fecha,setFecha]=React.useState(hoy());
+  const [tasaPersonal,setTasaPersonal]=React.useState("15");
+  const [editTasaId,setEditTasaId]=React.useState(null);
+  const [editTasaVal,setEditTasaVal]=React.useState("");
+  // Filtros
+  const [filtCliente,setFiltCliente]=React.useState("");
+  const [filtProveedor,setFiltProveedor]=React.useState("");
+  const [filtEstado,setFiltEstado]=React.useState("");
+  const [filtColor,setFiltColor]=React.useState("");
+  const generarContrato=(p,cl,pv)=>{
+    const {jsPDF}=window.jspdf;
+    const doc=new jsPDF();
+    const tc=p.tasaCliente||0.15;
+    const lineH=8;
+    let y=20;
+    const line=(txt,bold=false)=>{
+      if(bold) doc.setFont("helvetica","bold");
+      else doc.setFont("helvetica","normal");
+      doc.text(txt,20,y); y+=lineH;
+    };
+    const space=()=>{y+=4;};
+
+    doc.setFontSize(16);
+    doc.setFont("helvetica","bold");
+    doc.text("CONTRATO DE PRÉSTAMO PERSONAL",105,y,{align:"center"}); y+=12;
+
+    doc.setFontSize(10);
+    doc.setFont("helvetica","normal");
+    doc.text(`Fecha: ${p.fechaInicio||hoy()}`,20,y); y+=lineH;
+    space();
+
+    line("DATOS DEL PRESTATARIO",true);
+    line(`Nombre: ${cl?.nombre||"—"}`);
+    line(`Cédula: ${cl?.cedula||"—"}`);
+    line(`Teléfono: ${cl?.telefono||"—"}`);
+    line(`Correo: ${cl?.correo||"—"}`);
+    line(`Dirección: ${cl?.direccion||"—"}`);
+    line(`Trabajo: ${cl?.trabajo||"—"}`);
+    space();
+
+    line("CONDICIONES DEL PRÉSTAMO",true);
+    line(`Capital prestado: $${p.capitalInicial?.toFixed(2)||"0.00"}`);
+    line(`Tasa de interés: ${(tc*100).toFixed(1)}% quincenal`);
+    line(`Fecha de inicio: ${p.fechaInicio||"—"}`);
+    line(`Primer pago: ${p.proximoPago||"—"}`);
+    line(`Proveedor del capital: ${pv?.nombre||"—"}`);
+    line(`Saldo actual: $${p.saldo?.toFixed(2)||"0.00"}`);
+    space();
+
+    line("CONDICIONES GENERALES",true);
+    const condiciones=[
+      "1. Los pagos se realizan los días 15 y 30 de cada mes.",
+      "2. El interés se calcula sobre el saldo pendiente cada quincena.",
+      "3. El pago recibido se aplica primero a intereses y luego a capital.",
+      "4. El incumplimiento de pago genera mora sobre el saldo.",
+      "5. El prestatario se compromete a honrar la deuda en los plazos acordados.",
+    ];
+    condiciones.forEach(c=>{doc.text(c,20,y,{maxWidth:170}); y+=lineH;});
+    space();space();
+
+    line("FIRMAS",true);
+    y+=20;
+    doc.line(20,y,80,y); doc.line(120,y,180,y);
+    y+=6;
+    doc.text("Prestatario",20,y); doc.text("Prestamista",120,y);
+
+    doc.save(`Contrato_${cl?.nombre?.replace(/ /g,"_")||"cliente"}_${p.fechaInicio||hoy()}.pdf`);
+  };
+
+  const agregar=()=>{
+    if(!clienteId||!proveedor||!monto||isNaN(parseFloat(monto))) return;
+    const capital=parseFloat(monto);
+    const tc=parseFloat(tasaPersonal)/100||0.15;
+    actualizar({...datos,prestamos:[...datos.prestamos,{id:Date.now().toString(),clienteId,proveedor,capitalInicial:capital,saldo:capital,fechaInicio:fecha,proximoPago:proximaQuincena(fecha),estado:"activo",tasaCliente:tc}]});
+    setMonto("");setClienteId("");setProveedor("");setTasaPersonal("15");
+  };
+  const guardarTasa=(id)=>{
+    const tc=parseFloat(editTasaVal)/100;
+    if(isNaN(tc)||tc<=0) return;
+    actualizar({...datos,prestamos:datos.prestamos.map(p=>p.id===id?{...p,tasaCliente:tc}:p)});
+    setEditTasaId(null);
+  };
+  const eliminarPrestamo=(id)=>{
+    if(!confirm("¿Eliminar este préstamo y sus pagos?")) return;
+    actualizar({...datos,prestamos:datos.prestamos.filter(x=>x.id!==id),pagos:datos.pagos.filter(x=>x.prestamoId!==id)});
+  };
+  const provMap=Object.fromEntries(datos.proveedores.map(p=>[p.id,p]));
+  return <div>
+    <h2 style={s.h2}>Préstamos</h2>
+    <div style={s.form}>
+      <select style={s.input} value={clienteId} onChange={e=>setClienteId(e.target.value)}>
+        <option value="">Seleccionar cliente…</option>
+        {datos.clientes.map(c=><option key={c.id} value={c.id}>{c.nombre}</option>)}
+      </select>
+      <select style={s.input} value={proveedor} onChange={e=>setProveedor(e.target.value)}>
+        <option value="">Seleccionar proveedor…</option>
+        {datos.proveedores.map(p=><option key={p.id} value={p.id}>{p.nombre} ({p.tasa}%)</option>)}
+      </select>
+      <input style={s.input} type="number" placeholder="Monto ($)" value={monto} onChange={e=>setMonto(e.target.value)}/>
+      <input style={s.input} type="date" value={fecha} onChange={e=>setFecha(e.target.value)}/>
+      <input style={{...s.input,flex:"0 1 130px"}} type="number" placeholder="Tasa cliente (%)" value={tasaPersonal} onChange={e=>setTasaPersonal(e.target.value)}/>
+      <button style={s.btn} onClick={agregar}>+ Registrar</button>
+    </div>
+    {/* Filtros */}
+    <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:14,background:"#fff",padding:12,borderRadius:10,boxShadow:"0 1px 3px rgba(0,0,0,.07)"}}>
+      <select style={{...s.input,flex:"1 1 140px"}} value={filtCliente} onChange={e=>setFiltCliente(e.target.value)}>
+        <option value="">Todos los clientes</option>
+        {datos.clientes.map(c=><option key={c.id} value={c.id}>{c.nombre}</option>)}
+      </select>
+      <select style={{...s.input,flex:"1 1 140px"}} value={filtProveedor} onChange={e=>setFiltProveedor(e.target.value)}>
+        <option value="">Todos los proveedores</option>
+        {datos.proveedores.map(p=><option key={p.id} value={p.id}>{p.nombre}</option>)}
+      </select>
+      <select style={{...s.input,flex:"1 1 120px"}} value={filtEstado} onChange={e=>setFiltEstado(e.target.value)}>
+        <option value="">Todos los estados</option>
+        <option value="activo">Activo</option>
+        <option value="pagado">Pagado</option>
+      </select>
+      <select style={{...s.input,flex:"1 1 120px"}} value={filtColor} onChange={e=>setFiltColor(e.target.value)}>
+        <option value="">Todos</option>
+        <option value="verde">🟢 Al día</option>
+        <option value="amarillo">🟡 En mora</option>
+        <option value="normal">⚪ Sin clasificar</option>
+      </select>
+      {(filtCliente||filtProveedor||filtEstado||filtColor)&&<button style={{...s.btnDanger,padding:"8px 12px"}} onClick={()=>{setFiltCliente("");setFiltProveedor("");setFiltEstado("");setFiltColor("");}}>✕ Limpiar</button>}
+    </div>
+    {datos.prestamos.length===0?<p style={s.empty}>No hay préstamos registrados.</p>:
+      <div style={{overflowX:"auto"}}><table style={s.tabla}>
+        <thead><tr>{["Cliente","Proveedor","Capital","Saldo","Tasa","Interés","Próx. pago","Estado",""].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
+        <tbody>{datos.prestamos.map(p=>{
+          const cl=datos.clientes.find(c=>c.id===p.clienteId);
+          const pv=provMap[p.proveedor];
+          const tc=p.tasaCliente||0.15;
+          const ahora=new Date();
+          const proxPago=new Date(p.proximoPago+"T00:00:00");
+          const diasVencido=Math.floor((ahora-proxPago)/(1000*60*60*24));
+          const ultimoPago=[...datos.pagos].filter(x=>x.prestamoId===p.id).sort((a,b)=>new Date(b.fecha)-new Date(a.fecha))[0];
+          const pagoEnEstaPeriodo=ultimoPago&&new Date(ultimoPago.fecha+"T00:00:00")>=new Date(proxPago.getTime()-16*24*60*60*1000);
+          let rowBg="transparent";
+          let colorTag="normal";
+          if(p.estado!=="pagado"){
+            if(pagoEnEstaPeriodo){rowBg="#dcfce7";colorTag="verde";}
+            else if(diasVencido>3){rowBg="#fef9c3";colorTag="amarillo";}
+          }
+          // Aplicar filtros
+          if(filtCliente && p.clienteId!==filtCliente) return null;
+          if(filtProveedor && p.proveedor!==filtProveedor) return null;
+          if(filtEstado && p.estado!==filtEstado) return null;
+          if(filtColor && colorTag!==filtColor) return null;
+          return <tr key={p.id} style={p.estado==="pagado"?{opacity:0.5}:{background:rowBg}}>
+            <td style={s.td}>{cl?.nombre||<span style={{color:"#dc2626"}}>Sin cliente</span>}</td>
+            <td style={s.td}>{pv?.nombre.split(" ")[0]||"—"}</td>
+            <td style={s.td}>{fmt(p.capitalInicial)}</td>
+            <td style={s.td}>{fmt(p.saldo)}</td>
+            <td style={s.td}>{editTasaId===p.id
+              ?<div style={{display:"flex",gap:4}}>
+                  <input style={{...s.input,flex:"none",width:60,padding:"4px 6px"}} type="number" value={editTasaVal} onChange={e=>setEditTasaVal(e.target.value)}/>
+                  <button style={{...s.btn,padding:"4px 8px",fontSize:11}} onClick={()=>guardarTasa(p.id)}>✔</button>
+                  <button style={{...s.btnDanger,padding:"4px 8px"}} onClick={()=>setEditTasaId(null)}>✕</button>
+                </div>
+              :<span style={{cursor:"pointer",color:"#2563eb",fontWeight:600}} onClick={()=>{setEditTasaId(p.id);setEditTasaVal((tc*100).toFixed(1));}}>{(tc*100).toFixed(1)}% ✏</span>
+            }</td>
+            <td style={s.td}>{fmt(p.saldo*tc)}</td>
+            <td style={s.td}>{p.proximoPago}</td>
+            <td style={s.td}><span style={{color:p.estado==="activo"?"#059669":"#6b7280"}}>{p.estado==="activo"?"Activo":"Pagado"}</span></td>
+            <td style={s.td}><div style={{display:"flex",gap:4}}>
+              <button style={{...s.btnSec,padding:"4px 8px",fontSize:11}} onClick={()=>generarContrato(p,cl,pv)}>📄 PDF</button>
+              <button style={s.btnDanger} onClick={()=>eliminarPrestamo(p.id)}>Eliminar</button>
+            </div></td>
+          </tr>;
+        })}</tbody>
+      </table></div>}
+  </div>;
+}
+
+function Pagos({datos,actualizar}){
+  const [prestamoId,setPrestamoId]=React.useState("");
+  const [montoPago,setMontoPago]=React.useState("");
+  const [fechaPago,setFechaPago]=React.useState(hoy());
+  const [nota,setNota]=React.useState("");
+  const [detalle,setDetalle]=React.useState(null);
+  const provMap=Object.fromEntries(datos.proveedores.map(p=>[p.id,p]));
+  const prestamosActivos=datos.prestamos.filter(p=>p.saldo>0).map(p=>({...p,cliente:datos.clientes.find(c=>c.id===p.clienteId)}));
+  const [soloCapital,setSoloCapital]=React.useState(false);
+
+  const calcular=()=>{
+    const p=datos.prestamos.find(x=>x.id===prestamoId);
+    if(!p||!montoPago) return;
+    const prov=provMap[p.proveedor]; if(!prov) return;
+    const tc=p.tasaCliente||0.15;
+    const interes=p.saldo*tc;
+    const pago=parseFloat(montoPago);
+    let interesAplicado=0;
+    let capitalAplicado=0;
+    if(soloCapital){
+      interesAplicado=0;
+      capitalAplicado=pago;
+    } else {
+      interesAplicado=Math.min(pago,interes);
+      capitalAplicado=Math.max(0,pago-interes);
+    }
+    const nuevoSaldo=Math.max(0,p.saldo-capitalAplicado);
+    setDetalle({interes,interesAplicado,capitalAplicado,nuevoSaldo,gananciaJorge:soloCapital?0:p.saldo*(tc-prov.tasa/100),gananciaProv:soloCapital?0:p.saldo*(prov.tasa/100),tc,prov,p,soloCapital});
+  };
+  const registrar=()=>{
+    if(!detalle) return;
+    const {nuevoSaldo,gananciaJorge,gananciaProv,p}=detalle;
+    const pago={id:Date.now().toString(),prestamoId,fecha:fechaPago,monto:parseFloat(montoPago),interesAplicado:detalle.interesAplicado,capitalAplicado:detalle.capitalAplicado,saldoAnterior:p.saldo,nuevoSaldo,gananciaJorge,gananciaProv,nota};
+    const nuevosPrestamos=datos.prestamos.map(pr=>pr.id===prestamoId?{...pr,saldo:nuevoSaldo,estado:nuevoSaldo===0?"pagado":"activo",proximoPago:nuevoSaldo>0?proximaQuincena(fechaPago):pr.proximoPago}:pr);
+    let nf={...datos.fondoMutuo};
+    if(detalle.prov.fondo){
+      nf.saldoJorge+=gananciaJorge;
+      nf.movimientos=[...nf.movimientos,{fecha:fechaPago,tipo:"Interés cobrado",monto:detalle.interesAplicado,detalle:`Pago de ${datos.clientes.find(c=>c.id===p.clienteId)?.nombre}`}];
+    }
+    actualizar({...datos,prestamos:nuevosPrestamos,pagos:[...datos.pagos,pago],fondoMutuo:nf});
+    setPrestamoId("");setMontoPago("");setNota("");setDetalle(null);
+  };
+  const historial=[...datos.pagos].reverse().map(pg=>{
+    const pr=datos.prestamos.find(x=>x.id===pg.prestamoId);
+    return {...pg,cliente:datos.clientes.find(c=>c.id===pr?.clienteId)};
+  });
+  return <div>
+    <h2 style={s.h2}>Registrar pago</h2>
+    <div style={s.form}>
+      <select style={s.input} value={prestamoId} onChange={e=>{setPrestamoId(e.target.value);setDetalle(null);}}>
+        <option value="">Seleccionar préstamo activo…</option>
+        {prestamosActivos.map(p=>{
+          const tc=p.tasaCliente||0.15;
+          return <option key={p.id} value={p.id}>{p.cliente?.nombre} — {fmt(p.saldo)} ({provMap[p.proveedor]?.nombre.split(" ")[0]}) {(tc*100).toFixed(1)}%</option>;
+        })}
+      </select>
+      <input style={s.input} type="number" placeholder="Monto recibido ($)" value={montoPago} onChange={e=>{setMontoPago(e.target.value);setDetalle(null);}}/>
+      <input style={s.input} type="date" value={fechaPago} onChange={e=>setFechaPago(e.target.value)}/>
+      <input style={s.input} placeholder="Nota (opcional)" value={nota} onChange={e=>setNota(e.target.value)}/>
+      <label style={{display:"flex",alignItems:"center",gap:6,fontSize:13,color:"#475569",whiteSpace:"nowrap"}}>
+        <input type="checkbox" checked={soloCapital} onChange={e=>{setSoloCapital(e.target.checked);setDetalle(null);}}/>
+        Solo capital (sin interés)
+      </label>
+      <button style={s.btnSec} onClick={calcular}>Calcular</button>
+    </div>
+    {detalle && <div style={s.detalleBox}>
+      <h3 style={{margin:"0 0 10px",color:"#1e293b"}}>Desglose del pago</h3>
+      <Fila label={`Interés esta quincena (${(detalle.tc*100).toFixed(1)}%)`} valor={fmt(detalle.interes)}/>
+      <Fila label="Interés aplicado"  valor={fmt(detalle.interesAplicado)}/>
+      <Fila label="Capital aplicado"  valor={fmt(detalle.capitalAplicado)}/>
+      <Fila label="Nuevo saldo"       valor={fmt(detalle.nuevoSaldo)} bold/>
+      <div style={s.divider}/>
+      <Fila label={`Ganancia ${detalle.prov.nombre.split(" ")[0]} (${detalle.prov.tasa}%)`} valor={fmt(detalle.gananciaProv)} color="#2563eb"/>
+      <Fila label={`Tu ganancia (${((detalle.tc-detalle.prov.tasa/100)*100).toFixed(1)}%)`} valor={fmt(detalle.gananciaJorge)} color="#7c3aed" bold/>
+      {detalle.prov.fondo && <p style={{color:"#059669",fontSize:12,marginTop:8}}>✔ Los intereses van al fondo mutuo.</p>}
+      <div style={{display:"flex",flexWrap:"wrap",gap:8,marginTop:12}}>
+        <button style={s.btn} onClick={()=>{
+          registrar();
+          const cl=datos.clientes.find(c=>c.id===detalle.p.clienteId);
+          if(cl?.correo){
+            emailjs.send("service_0mcoebn","template_fthz1c1",{
+              correo_cliente: cl.correo,
+              nombre_cliente: cl.nombre,
+              monto_pagado: parseFloat(montoPago).toFixed(2),
+              interes: detalle.interesAplicado.toFixed(2),
+              capital: detalle.capitalAplicado.toFixed(2),
+              saldo_pendiente: detalle.nuevoSaldo.toFixed(2),
+              proximo_pago: proximaQuincena(fechaPago),
+            }).then(()=>alert("✔ Correo enviado a "+cl.correo)).catch((err)=>alert("Error enviando correo: "+(err&&err.text?err.text:JSON.stringify(err))));
+          }
+        }}>Confirmar y guardar pago</button>
+        <button style={{...s.btnSec,background:"#25D366"}} onClick={()=>{
+          const cl=datos.clientes.find(c=>c.id===detalle.p.clienteId);
+          const tc=detalle.tc||0.15;
+          const msg=`Hola ${cl?.nombre||""},%0AEste es el resumen de tu pago:%0A%0A💰 Monto pagado: $${parseFloat(montoPago).toFixed(2)}%0A📊 Interés aplicado: $${detalle.interesAplicado.toFixed(2)}%0A💵 Capital abonado: $${detalle.capitalAplicado.toFixed(2)}%0A✅ Saldo pendiente: $${detalle.nuevoSaldo.toFixed(2)}%0A📅 Próximo pago: ${proximaQuincena(fechaPago)}%0A%0AGracias por tu pago.`;
+          window.open(`https://wa.me/?text=${msg}`,"_blank");
+        }}>📱 WhatsApp</button>
+        <button style={{...s.btnSec,background:"#0088cc"}} onClick={()=>{
+          const cl=datos.clientes.find(c=>c.id===detalle.p.clienteId);
+          const msg=`Hola ${cl?.nombre||""}, resumen de tu pago: Monto: $${parseFloat(montoPago).toFixed(2)} | Interés: $${detalle.interesAplicado.toFixed(2)} | Capital: $${detalle.capitalAplicado.toFixed(2)} | Saldo pendiente: $${detalle.nuevoSaldo.toFixed(2)} | Próximo pago: ${proximaQuincena(fechaPago)}. Gracias.`;
+          window.open(`https://t.me/share/url?text=${encodeURIComponent(msg)}`,"_blank");
+        }}>✈ Telegram</button>
+      </div>
+    </div>}
+    <h3 style={s.h3}>Historial de pagos</h3>
+    {historial.length===0?<p style={s.empty}>No hay pagos registrados.</p>:
+      <div style={{overflowX:"auto"}}><table style={s.tabla}>
+        <thead><tr>{["Fecha","Cliente","Proveedor","Pago","Interés","Capital","Nuevo saldo","Tu ganancia",""].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
+        <tbody>{historial.map(pg=>{
+          const pr=datos.prestamos.find(x=>x.id===pg.prestamoId);
+          const pv=pr?provMap[pr.proveedor]:null;
+          return <tr key={pg.id}>
+            <td style={s.td}>{pg.fecha}</td>
+            <td style={s.td}>{pg.cliente?.nombre||"—"}</td>
+            <td style={s.td}>{pv?.nombre.split(" ")[0]||"—"}</td>
+            <td style={s.td}>{fmt(pg.monto)}</td>
+            <td style={s.td}>{fmt(pg.interesAplicado)}</td>
+            <td style={s.td}>{fmt(pg.capitalAplicado)}</td>
+            <td style={s.td}>{fmt(pg.nuevoSaldo)}</td>
+            <td style={{...s.td,color:"#7c3aed",fontWeight:600}}>{fmt(pg.gananciaJorge)}</td>
+            <td style={s.td}><button style={s.btnDanger} onClick={()=>{
+              if(!confirm("¿Eliminar este pago?")) return;
+              actualizar({...datos,pagos:datos.pagos.filter(x=>x.id!==pg.id)});
+            }}>✕</button></td>
+          </tr>;
+        })}</tbody>
+      </table></div>}
+  </div>;
+}
+
+function FondoMutuo({datos,actualizar}){
+  const [tipo,setTipo]=React.useState("reinversion");
+  const [monto,setMonto]=React.useState("");
+  const [fecha,setFecha]=React.useState(hoy());
+  const [nota,setNota]=React.useState("");
+  const registrar=()=>{
+    if(!monto||isNaN(parseFloat(monto))) return;
+    const m=parseFloat(monto);
+    let nf={...datos.fondoMutuo,movimientos:[...datos.fondoMutuo.movimientos,{fecha,tipo,monto:m,detalle:nota}]};
+    if(tipo==="retiro")      nf.saldoJorge=Math.max(0,nf.saldoJorge-m);
+    if(tipo==="reinversion") nf.saldoJorge+=m;
+    actualizar({...datos,fondoMutuo:nf}); setMonto("");setNota("");
+  };
+  const f=datos.fondoMutuo;
+  return <div>
+    <h2 style={s.h2}>Fondo Mutuo — Milixa Yariela</h2>
+    <div style={s.cards}>
+      <Tarjeta titulo="Capital de Milixa" valor={fmt(f.saldoMilixa)}              color="#2563eb"/>
+      <Tarjeta titulo="Tu acumulado"      valor={fmt(f.saldoJorge)}               color="#7c3aed"/>
+      <Tarjeta titulo="Total en fondo"    valor={fmt(f.saldoMilixa+f.saldoJorge)} color="#059669"/>
+    </div>
+    <h3 style={s.h3}>Registrar movimiento manual</h3>
+    <div style={s.form}>
+      <select style={s.input} value={tipo} onChange={e=>setTipo(e.target.value)}>
+        <option value="reinversion">Reinversión</option>
+        <option value="retiro">Retiro</option>
+        <option value="otro">Otro</option>
+      </select>
+      <input style={s.input} type="number" placeholder="Monto ($)" value={monto} onChange={e=>setMonto(e.target.value)}/>
+      <input style={s.input} type="date" value={fecha} onChange={e=>setFecha(e.target.value)}/>
+      <input style={s.input} placeholder="Nota" value={nota} onChange={e=>setNota(e.target.value)}/>
+      <button style={s.btn} onClick={registrar}>Registrar</button>
+    </div>
+    <h3 style={s.h3}>Movimientos</h3>
+    {f.movimientos.length===0?<p style={s.empty}>No hay movimientos todavía.</p>:
+      <div style={{overflowX:"auto"}}><table style={s.tabla}>
+        <thead><tr>{["Fecha","Tipo","Monto","Detalle"].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
+        <tbody>{[...f.movimientos].reverse().map((m,i)=><tr key={i}>
+          <td style={s.td}>{m.fecha}</td>
+          <td style={s.td}>{m.tipo}</td>
+          <td style={s.td}>{fmt(m.monto)}</td>
+          <td style={s.td}>{m.detalle||"—"}</td>
+        </tr>)}</tbody>
+      </table></div>}
+  </div>;
+}
+
+function Reportes({datos}){
+  const provMap=Object.fromEntries(datos.proveedores.map(p=>[p.id,p]));
+
+  // Agrupar ganancias por mes
+  const gananciaPorMes={};
+  datos.pagos.forEach(pg=>{
+    const mes=pg.fecha.substring(0,7); // YYYY-MM
+    if(!gananciaPorMes[mes]) gananciaPorMes[mes]={mes,gananciaJorge:0,total:0,pagos:0};
+    gananciaPorMes[mes].gananciaJorge+=pg.gananciaJorge||0;
+    gananciaPorMes[mes].total+=pg.monto||0;
+    gananciaPorMes[mes].pagos+=1;
+  });
+  const meses=Object.values(gananciaPorMes).sort((a,b)=>a.mes.localeCompare(b.mes));
+  const maxGanancia=Math.max(...meses.map(m=>m.gananciaJorge),1);
+
+  // Ganancias por proveedor
+  const gananciaPorProv={};
+  datos.pagos.forEach(pg=>{
+    const pr=datos.prestamos.find(x=>x.id===pg.prestamoId);
+    if(!pr) return;
+    const pid=pr.proveedor;
+    if(!gananciaPorProv[pid]) gananciaPorProv[pid]={nombre:provMap[pid]?.nombre||"—",ganancia:0};
+    gananciaPorProv[pid].ganancia+=pg.gananciaJorge||0;
+  });
+  const porProv=Object.values(gananciaPorProv).sort((a,b)=>b.ganancia-a.ganancia);
+
+  const totalGanancia=meses.reduce((s,m)=>s+m.gananciaJorge,0);
+  const totalCobrado=meses.reduce((s,m)=>s+m.total,0);
+  const mejorMes=meses.length>0?meses.reduce((a,b)=>a.gananciaJorge>b.gananciaJorge?a:b):null;
+
+  const nombreMes=(m)=>{
+    const [anio,mes]=m.split("-");
+    const nombres=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+    return `${nombres[parseInt(mes)-1]} ${anio}`;
+  };
+
+  return <div>
+    <h2 style={s.h2}>Reportes y ganancias</h2>
+
+    <div style={s.cards}>
+      <Tarjeta titulo="Ganancia total acumulada" valor={fmt(totalGanancia)} color="#7c3aed"/>
+      <Tarjeta titulo="Total cobrado"            valor={fmt(totalCobrado)}  color="#2563eb"/>
+      <Tarjeta titulo="Pagos registrados"        valor={datos.pagos.length} color="#059669"/>
+      <Tarjeta titulo="Mejor mes"                valor={mejorMes?nombreMes(mejorMes.mes):"—"} color="#d97706"/>
+    </div>
+
+    {meses.length===0?<p style={s.empty}>No hay pagos registrados todavía.</p>:<>
+
+      <h3 style={s.h3}>Ganancia mensual</h3>
+      <div style={{background:"#fff",borderRadius:10,padding:16,boxShadow:"0 1px 3px rgba(0,0,0,.07)",marginBottom:20}}>
+        <div style={{display:"flex",alignItems:"flex-end",gap:8,height:160,overflowX:"auto",paddingBottom:8}}>
+          {meses.map((m,i)=>{
+            const altura=Math.max((m.gananciaJorge/maxGanancia)*140,4);
+            return <div key={m.mes} style={{display:"flex",flexDirection:"column",alignItems:"center",minWidth:48}}>
+              <div style={{fontSize:10,color:"#7c3aed",fontWeight:600,marginBottom:2}}>{fmt(m.gananciaJorge).replace("US$","$")}</div>
+              <div style={{width:36,height:altura,background:"#7c3aed",borderRadius:"4px 4px 0 0",opacity:0.85}}/>
+              <div style={{fontSize:9,color:"#64748b",marginTop:4,textAlign:"center",lineHeight:1.2}}>{nombreMes(m.mes)}</div>
+            </div>;
+          })}
+        </div>
+      </div>
+
+      <h3 style={s.h3}>Detalle por mes</h3>
+      <div style={{overflowX:"auto"}}><table style={s.tabla}>
+        <thead><tr>{["Mes","Pagos","Total cobrado","Tu ganancia"].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
+        <tbody>{[...meses].reverse().map(m=><tr key={m.mes}>
+          <td style={s.td}>{nombreMes(m.mes)}</td>
+          <td style={s.td}>{m.pagos}</td>
+          <td style={s.td}>{fmt(m.total)}</td>
+          <td style={{...s.td,color:"#7c3aed",fontWeight:600}}>{fmt(m.gananciaJorge)}</td>
+        </tr>)}</tbody>
+      </table></div>
+
+      {porProv.length>0 && <>
+        <h3 style={s.h3}>Ganancia por proveedor</h3>
+        <div style={{overflowX:"auto"}}><table style={s.tabla}>
+          <thead><tr>{["Proveedor","Tu ganancia total"].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
+          <tbody>{porProv.map(p=><tr key={p.nombre}>
+            <td style={s.td}>{p.nombre}</td>
+            <td style={{...s.td,color:"#7c3aed",fontWeight:600}}>{fmt(p.ganancia)}</td>
+          </tr>)}</tbody>
+        </table></div>
+      </>}
+    </>}
+  </div>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
