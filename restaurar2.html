@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Restaurar datos - PrestJRC</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',system-ui,sans-serif;background:#f8fafc;color:#1e293b;padding:16px;padding-bottom:100px}
+  h1{font-size:20px;margin-bottom:4px}
+  h2{font-size:16px;margin:20px 0 8px;color:#334155}
+  p.sub{color:#64748b;font-size:14px;margin-bottom:16px}
+  .card{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px;margin-bottom:10px}
+  .fila{display:flex;gap:10px;margin-bottom:10px}
+  .col{flex:1;border-radius:8px;padding:10px;font-size:13px;border:2px solid transparent;cursor:pointer}
+  .col.actual{background:#eff6ff}
+  .col.backup{background:#fff7ed}
+  .col.selegida{border-color:#16a34a;background:#f0fdf4}
+  .col-titulo{font-weight:bold;font-size:12px;margin-bottom:6px;text-transform:uppercase;letter-spacing:.03em}
+  .campo{margin-bottom:3px}
+  .campo b{color:#475569}
+  .diff{background:#fee2e2;border-radius:4px;padding:1px 4px}
+  .btn{padding:10px 16px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer}
+  .btn-primario{background:#2563eb;color:#fff}
+  .btn-secundario{background:#e2e8f0;color:#1e293b}
+  .btn-peligro{background:#dc2626;color:#fff}
+  .barra{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid #e2e8f0;padding:12px 16px;display:flex;gap:10px;justify-content:space-between;align-items:center}
+  .estado{font-size:13px;color:#64748b;flex:1}
+  .oculto{display:none}
+  .badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:99px;background:#e2e8f0;margin-left:6px}
+  .badge.nuevo{background:#dbeafe;color:#1e40af}
+  .badge.eliminado{background:#fee2e2;color:#991b1b}
+  input[type=text]{width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;margin-bottom:10px}
+  #log{white-space:pre-wrap;font-size:12px;color:#64748b;margin-top:10px}
+</style>
+</head>
+<body>
+<div id="root">Cargando...</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, doc, getDoc, setDoc, collection, getDocs } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyCbGiPR8xfMvyYxceLBKkdBkeh_nAfJAjg",
+  authDomain: "prestjrc.firebaseapp.com",
+  projectId: "prestjrc",
+  storageBucket: "prestjrc.firebasestorage.app",
+  messagingSenderId: "214459135401",
+  appId: "1:214459135401:web:f2aa551612295f80e9c0b8"
+};
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+const root = document.getElementById("root");
+let backupId = "backup_2026-08-29";
+let backupData = null;
+let liveData = null;
+let seguridadCreada = false;
+let selecciones = {}; // { "prestamos:ID": "actual"|"backup", ... }
+
+function fmt(v){
+  if(v===undefined) return "(no existe)";
+  if(typeof v==="object") return JSON.stringify(v);
+  return String(v);
+}
+
+function normalizar(v){
+  if(v===undefined||v===null||v==="") return null;
+  if(typeof v==="number") return v;
+  if(typeof v==="string"){
+    const n = Number(v);
+    if(!isNaN(n) && v.trim()!=="") return n; // "35" y 35 se tratan igual
+    return v.trim();
+  }
+  if(typeof v==="object") return JSON.stringify(v);
+  return v;
+}
+
+function valoresIguales(a,b){
+  return normalizar(a)===normalizar(b);
+}
+
+function difieren(a,b){
+  if(!a || !b) return !(!a && !b) ? true : false; // uno existe y el otro no => diferente
+  const campos = new Set([...Object.keys(a),...Object.keys(b)]);
+  for(const c of campos){
+    if(!valoresIguales(a[c], b[c])) return true;
+  }
+  return false;
+}
+
+function compararColeccion(nombre, arrA, arrB){
+  // arrA = actual (vivo), arrB = backup
+  arrA=arrA||[]; arrB=arrB||[];
+  const mapA=new Map(arrA.map(x=>[x.id,x]));
+  const mapB=new Map(arrB.map(x=>[x.id,x]));
+  const idsTodos=new Set([...mapA.keys(),...mapB.keys()]);
+  const filas=[];
+  for(const id of idsTodos){
+    const a=mapA.get(id), b=mapB.get(id);
+    if(difieren(a,b)) filas.push({id,actual:a,backup:b});
+  }
+  return filas;
+}
+
+function campoDiff(a,b,campo){
+  const va=a?a[campo]:undefined, vb=b?b[campo]:undefined;
+  const cambio = !valoresIguales(va,vb);
+  return `<div class="campo"><b>${campo}:</b> <span class="${cambio?'diff':''}">${fmt(va)}</span></div>`;
+}
+
+function renderFila(coleccion, fila){
+  const key=`${coleccion}:${fila.id}`;
+  const camposSet=new Set([...Object.keys(fila.actual||{}),...Object.keys(fila.backup||{})]);
+  camposSet.delete("id");
+  const campos=[...camposSet];
+  const esNuevoEnActual = fila.actual && !fila.backup;
+  const noExisteEnActual = !fila.actual && fila.backup;
+  const sel = selecciones[key];
+  return `
+  <div class="card">
+    <div style="font-weight:600;margin-bottom:8px">
+      ${coleccion} · id ${fila.id}
+      ${esNuevoEnActual?'<span class="badge nuevo">agregado después del backup</span>':''}
+      ${noExisteEnActual?'<span class="badge eliminado">no existe en lo actual</span>':''}
+    </div>
+    <div class="fila">
+      <div class="col actual ${sel==='actual'?'selegida':''}" data-key="${key}" data-valor="actual">
+        <div class="col-titulo">📱 Lo que tienes ahora</div>
+        ${fila.actual? campos.map(c=>campoDiff(fila.actual,fila.backup,c)).join(""):"<i>No existe en los datos actuales</i>"}
+      </div>
+      <div class="col backup ${sel==='backup'?'selegida':''}" data-key="${key}" data-valor="backup">
+        <div class="col-titulo">🗄 En el backup ${backupId.replace("backup_","")}</div>
+        ${fila.backup? campos.map(c=>campoDiff(fila.backup,fila.actual,c)).join(""):"<i>No existe en el backup</i>"}
+      </div>
+    </div>
+  </div>`;
+}
+
+function avance(coleccion,obj){
+  if(!obj) return -1;
+  let score=0;
+  if(coleccion==="prestamos"||coleccion==="pagos"){
+    if(obj.estado==="pagado") score+=1000;
+    if(typeof obj.saldo==="number"||!isNaN(Number(obj.saldo))) score-=Number(obj.saldo)||0; // menor saldo = más avance
+    if(obj.proximoPago) score+= (new Date(obj.proximoPago)).getTime()/1e13; // fecha más adelante = más avance (peso chico)
+    if(obj.fecha) score+= (new Date(obj.fecha)).getTime()/1e13;
+  }
+  return score;
+}
+
+function recomendado(coleccion,fila){
+  // Cliente borrado que existía en backup: recomendar traerlo de vuelta
+  if(!fila.actual && fila.backup) return "backup";
+  // Nuevo, agregado después del backup: dejarlo como está
+  if(fila.actual && !fila.backup) return undefined;
+  if(coleccion==="clientes") return undefined; // cambios de texto en clientes: no autoseleccionar
+  // Ambos existen (prestamos/pagos): preferir el que muestra más avance
+  const scoreActual=avance(coleccion,fila.actual);
+  const scoreBackup=avance(coleccion,fila.backup);
+  if(scoreBackup>scoreActual+0.0001) return "backup";
+  return undefined;
+}
+
+function autoSeleccionar(){
+  const grupos=["clientes","prestamos","pagos","proveedores"];
+  for(const g of grupos){
+    const filas = compararColeccion(g, liveData[g], backupData[g]);
+    for(const f of filas){
+      const rec = recomendado(g,f);
+      if(rec) selecciones[`${g}:${f.id}`]=rec;
+    }
+  }
+  render();
+}
+
+function render(){
+  const grupos=["clientes","prestamos","pagos","proveedores"];
+  let totalDiferencias=0;
+  let html = `<h1>Comparar y restaurar</h1>
+  <p class="sub">Backup de referencia: <b>${backupId}</b>. Toca la columna que quieras conservar en cada tarjeta donde haya diferencia. Lo que no elijas se queda como está ahora (no se pierde nada por defecto).</p>
+  <button class="btn btn-secundario" id="btnAuto" style="margin-bottom:14px">✨ Seleccionar recomendado automáticamente</button>`;
+
+  for(const g of grupos){
+    const filas = compararColeccion(g, liveData[g], backupData[g]);
+    if(filas.length===0) continue;
+    totalDiferencias += filas.length;
+    html += `<h2>${g} (${filas.length} con diferencias)</h2>`;
+    html += filas.map(f=>renderFila(g,f)).join("");
+  }
+
+  if(totalDiferencias===0){
+    html += `<p style="margin-top:20px">✅ No se encontraron diferencias entre lo actual y el backup ${backupId.replace("backup_","")} en clientes, préstamos, pagos ni proveedores.</p>`;
+  }
+
+  html += `<div id="log"></div>`;
+  root.innerHTML = html;
+
+  const btnAuto=document.getElementById("btnAuto");
+  if(btnAuto) btnAuto.addEventListener("click", autoSeleccionar);
+
+  document.querySelectorAll(".col[data-key]").forEach(el=>{
+    el.addEventListener("click", ()=>{
+      const key = el.dataset.key;
+      const valor = el.dataset.valor;
+      selecciones[key] = (selecciones[key]===valor) ? undefined : valor;
+      render();
+    });
+  });
+
+  actualizarBarra(totalDiferencias);
+}
+
+function actualizarBarra(totalDiferencias){
+  const seleccionadas = Object.values(selecciones).filter(Boolean).length;
+  let barra = document.getElementById("barra");
+  if(!barra){
+    barra = document.createElement("div");
+    barra.id="barra"; barra.className="barra";
+    document.body.appendChild(barra);
+  }
+  barra.innerHTML = `
+    <div class="estado">${seguridadCreada?'✔ Copia de seguridad creada.':'⏳ Creando copia de seguridad...'} ${seleccionadas} cambio(s) marcado(s) de ${totalDiferencias}.</div>
+    <button class="btn btn-primario" id="btnAplicar" ${seleccionadas===0?'disabled style="opacity:.5"':''}>Aplicar seleccionados</button>
+  `;
+  const btn=document.getElementById("btnAplicar");
+  if(btn) btn.addEventListener("click", aplicarCambios);
+}
+
+async function aplicarCambios(){
+  if(!confirm("¿Aplicar los cambios seleccionados? Ya se guardó una copia de seguridad de tus datos actuales antes de empezar, así que esto es reversible si algo sale mal.")) return;
+  const nuevo = JSON.parse(JSON.stringify(liveData)); // partir de lo actual
+  for(const [key,valor] of Object.entries(selecciones)){
+    if(!valor) continue;
+    const [coleccion,id] = key.split(":");
+    const origen = valor==="backup" ? backupData : liveData;
+    const item = (origen[coleccion]||[]).find(x=>x.id===id);
+    let lista = nuevo[coleccion]||[];
+    const idx = lista.findIndex(x=>x.id===id);
+    if(!item){
+      // se eligió una versión que no existe (borrar el registro)
+      if(idx>-1) lista.splice(idx,1);
+    } else if(idx>-1){
+      lista[idx]=item;
+    } else {
+      lista.push(item);
+    }
+    nuevo[coleccion]=lista;
+  }
+  document.getElementById("log").textContent = "Guardando cambios en Firebase...";
+  try{
+    await setDoc(doc(db,"creditosApp","datos"), nuevo);
+    document.getElementById("log").textContent = "✅ Cambios aplicados y guardados correctamente.";
+  }catch(e){
+    document.getElementById("log").textContent = "❌ Error al guardar: "+e.message;
+  }
+}
+
+async function crearCopiaDeSeguridad(datosActuales){
+  const fecha = new Date();
+  const id = "seguridad_previa_restauracion_" + fecha.toISOString().replace(/[:.]/g,"-");
+  await setDoc(doc(db,"backups",id), {...datosActuales, notaSeguridad:"Copia automática creada antes de restaurar desde "+backupId});
+  return id;
+}
+
+async function iniciar(){
+  root.innerHTML = "Conectando con Firebase...";
+  const liveSnap = await getDoc(doc(db,"creditosApp","datos"));
+  liveData = liveSnap.exists()? liveSnap.data() : null;
+  if(!liveData){ root.innerHTML="No se encontraron datos actuales en creditosApp/datos."; return; }
+
+  root.innerHTML = "Creando copia de seguridad de tus datos actuales antes de continuar...";
+  const idSeguridad = await crearCopiaDeSeguridad(liveData);
+  seguridadCreada = true;
+
+  root.innerHTML = "Buscando respaldos disponibles...";
+  const lista = await getDocs(collection(db,"backups"));
+  const ids = lista.docs.map(d=>d.id).filter(x=>/^backup_\d{4}-\d{2}-\d{2}$/.test(x)).sort().reverse().slice(0,20);
+  root.innerHTML = `<h1>Elige el respaldo</h1>
+  <p class="sub">✔ Ya se guardó una copia de seguridad de tus datos actuales (<b>${idSeguridad}</b>). Elige la fecha del respaldo con la que quieres comparar. Los más recientes están arriba. Empieza por el día ANTES de que se borraron los pagos.</p>`
+  + ids.map(id=>`<button class="btn btn-secundario" style="display:block;width:100%;margin:8px 0;padding:14px" data-id="${id}">🗄 ${id.replace("backup_","")}</button>`).join("");
+  document.querySelectorAll("button[data-id]").forEach(b=>b.addEventListener("click", async ()=>{
+    backupId=b.dataset.id;
+    root.innerHTML="Cargando "+backupId+"...";
+    const snap=await getDoc(doc(db,"backups",backupId));
+    if(!snap.exists()){root.innerHTML="No se encontró "+backupId;return;}
+    backupData=snap.data();
+    render();
+  }));
+}
+
+iniciar();
+</script>
+</body>
+</html>
